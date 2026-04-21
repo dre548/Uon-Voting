@@ -371,7 +371,7 @@ function AdminDashboard({ candidates, refreshCandidates }) {
             )
           })}
         </div>
-      )}
-    </div>
-  );
+  )}
+</div>
+);
 }
