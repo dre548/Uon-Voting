@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import uonLogo from './uon-logo.jpeg'; 
 
 // Ensures React app talks to your live Render server
-const API_BASE = 'https://uon-voting-backend.onrender.com';
+const API_BASE = 'https://uon-voting-backends.onrender.com';
 
 // --- STYLING (UoN Inspired) ---
 const COLORS = {
