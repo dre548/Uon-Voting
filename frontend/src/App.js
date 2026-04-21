@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import uonLogo from './uon-logo.jpeg'; 
+import uonLogo from './uon-logo.jpg'; 
 
-// Ensures React app talks to your live Render server
 const API_BASE = 'https://uon-voting-backends.onrender.com';
 
-// --- STYLING (UoN Inspired) ---
 const COLORS = {
   primary: '#004d28', 
   secondary: '#d4af37', 
@@ -40,18 +38,17 @@ export default function App() {
 
   const refreshCandidates = () => fetch(`${API_BASE}/candidates`).then(r => r.json()).then(setCandidates);
 
-  // --- CRYPTO HELPERS ---
   const modPow = (base, exp, mod) => {
     let result = 1n, b = window.BigInt(base), e = window.BigInt(exp), m = window.BigInt(mod);
     while (e > 0n) { if (e % 2n === 1n) result = (result * b) % m; b = (b * b) % m; e /= 2n; }
     return Number(result);
   };
+  
   const generateHash = async (str) => {
     const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
     return window.BigInt("0x" + Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('')); 
   };
 
-  // --- RENDERING VIEWS ---
   const renderHome = () => (
     <div style={{ textAlign: 'center', marginTop: '50px' }}>
       <img src={uonLogo} alt="University of Nairobi Logo" style={{ width: '100%', maxWidth: '300px', borderRadius: '8px' }} />
@@ -118,9 +115,14 @@ export default function App() {
             t: String(t), 
             s: String(s), 
             national_id: activeVoter,
-            candidate_id: candId 
+            candidate_id: candId
         })
-      })
+      }).then(async res => {
+        const data = await res.json();
+        if (res.ok) { setReceipt(data.tracking_code); setView('RECEIPT'); }
+        else alert("Error: " + data.detail);
+      });
+    };
 
     return (
       <div>
@@ -148,10 +150,10 @@ export default function App() {
       <h2 style={{ letterSpacing: '2px', background: '#fff', padding: '10px', display: 'inline-block', borderRadius: '5px' }}>{receipt}</h2>
       
       <div style={{ marginTop: '30px', padding: '20px', background: '#333', color: '#0f0', fontFamily: 'monospace', borderRadius: '8px', textAlign: 'left' }}>
-        <h3>> Secure Audit Trail</h3>
-        <p>> Ballot securely sealed using ElGamal ZKP</p>
-        <p>> Homomorphic aggregation enabled for universal verifiability</p>
-        <p>> Session Token: {activeVoter ? 'VALID' : 'EXPIRED'}</p>
+        <h3>&gt; Secure Audit Trail</h3>
+        <p>&gt; Ballot securely sealed using ElGamal ZKP</p>
+        <p>&gt; Homomorphic aggregation enabled for universal verifiability</p>
+        <p>&gt; Session Token: {activeVoter ? 'VALID' : 'EXPIRED'}</p>
       </div>
       <button style={{ ...styles.btn, marginTop: '20px' }} onClick={() => { setActiveVoter(null); setMessage(""); setView('HOME'); }}>Return to Home</button>
     </div>
@@ -177,7 +179,6 @@ export default function App() {
   );
 }
 
-// --- ADMIN DASHBOARD COMPONENT ---
 function AdminDashboard({ candidates, refreshCandidates }) {
   const [tab, setTab] = useState('OVERVIEW');
   const [newCand, setNewCand] = useState({ name: '', party: '', position: '', photo_url: '' });
@@ -191,7 +192,6 @@ function AdminDashboard({ candidates, refreshCandidates }) {
 
   useEffect(() => { fetchVoters(); fetchResults(); }, [tab]);
 
-  // --- Candidate Functions ---
   const saveCandidate = () => {
     const url = editingId ? `${API_BASE}/admin/candidates/${editingId}` : `${API_BASE}/admin/candidates`;
     const method = editingId ? 'PUT' : 'POST';
@@ -219,7 +219,6 @@ function AdminDashboard({ candidates, refreshCandidates }) {
     setEditingId(c.id);
   };
 
-  // --- Voter Functions ---
   const regVoter = () => {
     fetch(`${API_BASE}/admin/voters`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newVoter) })
       .then(async r => {
@@ -349,10 +348,10 @@ function AdminDashboard({ candidates, refreshCandidates }) {
                   }}>Reset PIN</button>
                 </div>
               </li>
-            )}
+            ))}
           </ul>
         </div>
-      ))}
+      )}
 
       {tab === 'RESULTS' && (
         <div style={styles.card}>
@@ -371,7 +370,7 @@ function AdminDashboard({ candidates, refreshCandidates }) {
             )
           })}
         </div>
-  )}
-</div>
-);
+      )}
+    </div>
+  );
 }
