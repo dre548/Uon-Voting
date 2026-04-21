@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 // This import requires the file to be exactly at src/uon-logo.jpg
-import uonLogo from './uon-logo.jpeg'; 
+import uonLogo from './uon-logo.jpeg';
+import { SpeedInsights } from '@vercel/speed-insights/react'; 
 
 // --- STYLING (UoN Inspired) ---
 const COLORS = {
@@ -169,6 +170,7 @@ export default function App() {
       {view === 'RECEIPT' && renderReceipt()}
       
       {view === 'ADMIN_DASHBOARD' && <AdminDashboard candidates={candidates} refreshCandidates={refreshCandidates} />}
+      <SpeedInsights />
     </div>
   );
 }
