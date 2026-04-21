@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 // This import requires the file to be exactly at src/uon-logo.jpg
 import uonLogo from './uon-logo.jpeg'; 
 
@@ -169,6 +170,7 @@ export default function App() {
       {view === 'RECEIPT' && renderReceipt()}
       
       {view === 'ADMIN_DASHBOARD' && <AdminDashboard candidates={candidates} refreshCandidates={refreshCandidates} />}
+      <Analytics />
     </div>
   );
 }
