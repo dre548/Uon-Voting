@@ -349,10 +349,10 @@ function AdminDashboard({ candidates, refreshCandidates }) {
                   }}>Reset PIN</button>
                 </div>
               </li>
-            ))}
+            )}
           </ul>
         </div>
-      )}
+      ))}
 
       {tab === 'RESULTS' && (
         <div style={styles.card}>
