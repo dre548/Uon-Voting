@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import uonLogo from './uon-logo.jpg'; 
+import uonLogo from './uon-logo.jpeg'; 
 
 const API_BASE = 'https://uon-voting-backends.onrender.com';
 
