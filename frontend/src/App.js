@@ -112,13 +112,15 @@ export default function App() {
 
       fetch(`${API_BASE}/vote`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ alpha: String(alpha), beta: String(beta), t: String(t), s: String(s), national_id: activeVoter })
-      }).then(async res => {
-        const data = await res.json();
-        if (res.ok) { setReceipt(data.tracking_code); setView('RECEIPT'); }
-        else alert("Error: " + data.detail);
-      });
-    };
+        body: JSON.stringify({ 
+            alpha: String(alpha), 
+            beta: String(beta), 
+            t: String(t), 
+            s: String(s), 
+            national_id: activeVoter,
+            candidate_id: candId 
+        })
+      })
 
     return (
       <div>
@@ -332,9 +334,20 @@ function AdminDashboard({ candidates, refreshCandidates }) {
           <h3 style={{marginTop: '30px'}}>Registry List</h3>
           <ul style={{ listStyle: 'none', padding: 0 }}>
             {voters.map(v => (
-              <li key={v.national_id} style={{ padding: '10px', borderBottom: '1px solid #ccc', display: 'flex', justifyContent: 'space-between' }}>
+              <li key={v.national_id} style={{ padding: '10px', borderBottom: '1px solid #ccc', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span>{v.name} (ID: {v.national_id})</span>
-                <span style={{ color: v.has_voted ? 'green' : 'red', fontWeight: 'bold' }}>{v.has_voted ? 'VOTED' : 'ELIGIBLE'}</span>
+                <div>
+                  <span style={{ color: v.has_voted ? 'green' : 'red', fontWeight: 'bold', marginRight: '15px' }}>{v.has_voted ? 'VOTED' : 'ELIGIBLE'}</span>
+                  <button style={{...styles.btnOutline, padding: '5px 10px', fontSize: '0.8em'}} onClick={() => {
+                    if(!window.confirm(`Generate a new PIN for ${v.name}?`)) return;
+                    fetch(`${API_BASE}/admin/voters/${v.national_id}/reset-pin`, { method: 'POST' })
+                      .then(async r => {
+                        const data = await r.json();
+                        if(r.ok) alert(`New PIN for ${v.name} is: ${data.new_pin}\nRecord this immediately!`);
+                        else alert(data.detail);
+                      });
+                  }}>Reset PIN</button>
+                </div>
               </li>
             ))}
           </ul>

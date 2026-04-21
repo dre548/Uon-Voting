@@ -58,6 +58,7 @@ class VoterAuth(BaseModel):
 
 class Vote(BaseModel):
     national_id: str
+    candidate_id: int  
     alpha: str
     beta: str
     t: str
@@ -144,6 +145,22 @@ def register_voters_bulk(req: BulkReq):
     conn.close()
     return {"processed": len(req.voters), "results": results}
 
+@app.post("/admin/voters/{national_id}/reset-pin")
+def reset_pin(national_id: str):
+    conn = get_db()
+    voter = conn.execute("SELECT * FROM voters WHERE national_id=?", (national_id,)).fetchone()
+    if not voter:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Voter not found")
+        
+    new_pin = ''.join(random.choices(string.digits, k=6))
+    hashed_pin = hashlib.sha256(new_pin.encode()).hexdigest()
+    
+    conn.execute("UPDATE voters SET pin=? WHERE national_id=?", (hashed_pin, national_id))
+    conn.commit()
+    conn.close()
+    return {"status": "success", "new_pin": new_pin}
+    
 @app.get("/admin/voters")
 def get_voters():
     conn = get_db()
@@ -178,17 +195,12 @@ def cast_vote(vote: Vote):
         conn.close()
         raise HTTPException(status_code=403, detail="Unauthorized or already voted")
 
-    cand_id = 1 
-    cands = conn.execute("SELECT id FROM candidates").fetchall()
-    for c in cands:
-        cand_id = c["id"] 
-        break 
-
     tracking_code = "UON-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
     
     conn.execute("UPDATE voters SET has_voted=1 WHERE national_id=?", (vote.national_id,))
+    # Now we insert the actual candidate_id sent from the frontend!
     conn.execute("INSERT INTO votes (tracking_code, national_id, candidate_id) VALUES (?, ?, ?)", 
-                 (tracking_code, vote.national_id, cand_id))
+                 (tracking_code, vote.national_id, vote.candidate_id))
     conn.commit()
     conn.close()
     return {"status": "success", "tracking_code": tracking_code}
