@@ -295,6 +295,7 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
   
   const fileRef = useRef(null);
 
+  // Safely map candidates and voters to prevent React crashes
   const safeCandidates = Array.isArray(candidates) ? candidates : [];
   const safeVoters = Array.isArray(voters) ? voters : [];
   
@@ -454,7 +455,7 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
     <div>
       <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', flexWrap: 'wrap' }}>
         {['OVERVIEW', 'CANDIDATES', 'VOTERS', 'RESULTS', 'SETTINGS'].map(t => (
-          <button key={t} style={{... (tab === t ? styles.btn : styles.btnOutline), flex: '1 1 100px'}} onClick={() => setTab(t)}>{t}</button>
+          <button key={t} style={{...(tab === t ? styles.btn : styles.btnOutline), flex: '1 1 100px'}} onClick={() => setTab(t)}>{t}</button>
         ))}
       </div>
 
