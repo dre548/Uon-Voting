@@ -35,30 +35,24 @@ def init_db():
                     (id INTEGER PRIMARY KEY, name TEXT, status TEXT, positions TEXT, end_time TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS audit_log 
                     (id INTEGER PRIMARY KEY AUTOINCREMENT, ts DATETIME DEFAULT CURRENT_TIMESTAMP, action TEXT, details TEXT, actor TEXT)''')
-    
-    # NEW VOTES TABLE: Allows multiple candidate selections per receipt code
     conn.execute('''CREATE TABLE IF NOT EXISTS votes_v2 
                     (id INTEGER PRIMARY KEY AUTOINCREMENT, tracking_code TEXT, national_id TEXT, candidate_id INTEGER, ts DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     
-    # --- SAFE MIGRATIONS ---
+    # Safe Migrations
     try: conn.execute("ALTER TABLE voters ADD COLUMN revoked BOOLEAN DEFAULT 0")
-    except sqlite3.OperationalError: pass
-    try: conn.execute("ALTER TABLE settings ADD COLUMN positions TEXT")
     except sqlite3.OperationalError: pass
     try: conn.execute("ALTER TABLE settings ADD COLUMN end_time TEXT")
     except sqlite3.OperationalError: pass
 
-    # Fix PINs for printing: Convert any old hashed PINs to raw 6-digit PINs
+    # Ensure all old hashed PINs are readable 6-digit ones for printing
     voters = conn.execute("SELECT national_id, pin FROM voters").fetchall()
     for v in voters:
         if len(str(v["pin"])) > 6:
             new_pin = ''.join(random.choices(string.digits, k=6))
             conn.execute("UPDATE voters SET pin=? WHERE national_id=?", (new_pin, v["national_id"]))
 
-    # Initialize default settings if empty
     if not conn.execute("SELECT * FROM settings").fetchone():
-        default_positions = json.dumps(["Presidential", "Gubernatorial", "Senate", "National Assembly", "Women Representative"])
-        conn.execute("INSERT INTO settings (id, name, status, positions, end_time) VALUES (1, 'UoN General Election', 'open', ?, '')", (default_positions,))
+        conn.execute("INSERT INTO settings (id, name, status, end_time) VALUES (1, 'UoN General Election', 'open', '')")
             
     conn.commit()
     conn.close()
@@ -67,6 +61,20 @@ init_db()
 
 def log_audit(conn, action: str, details: str, actor: str = "System"):
     conn.execute("INSERT INTO audit_log (action, details, actor) VALUES (?, ?, ?)", (action, details, actor))
+
+# --- HELPER: CHECK IF DEADLINE PASSED ---
+def is_election_closed(conn):
+    settings = conn.execute("SELECT status, end_time FROM settings WHERE id=1").fetchone()
+    if not settings: return False
+    if settings["status"] == "closed": return True
+    if settings["end_time"]:
+        try:
+            end_dt = datetime.fromisoformat(settings["end_time"])
+            if datetime.now() > end_dt:
+                return True
+        except ValueError:
+            pass
+    return False
 
 # --- PYDANTIC MODELS ---
 class Candidate(BaseModel):
@@ -93,7 +101,6 @@ class Vote(BaseModel):
 class SettingsUpdate(BaseModel):
     name: str
     status: str
-    positions: List[str]
     end_time: Optional[str] = ""
 
 # --- ENDPOINTS ---
@@ -106,19 +113,13 @@ def get_settings():
     conn = get_db()
     settings = conn.execute("SELECT * FROM settings WHERE id=1").fetchone()
     conn.close()
-    s_dict = dict(settings)
-    
-    if "positions" in s_dict and s_dict["positions"]:
-        s_dict["positions"] = json.loads(s_dict["positions"])
-    else:
-        s_dict["positions"] = []
-    return s_dict
+    return dict(settings)
 
 @app.put("/admin/settings")
 def update_settings(s: SettingsUpdate):
     conn = get_db()
-    conn.execute("UPDATE settings SET name=?, status=?, positions=?, end_time=? WHERE id=1", 
-                 (s.name, s.status, json.dumps(s.positions), s.end_time))
+    conn.execute("UPDATE settings SET name=?, status=?, end_time=? WHERE id=1", 
+                 (s.name, s.status, s.end_time))
     log_audit(conn, "CONFIG_UPDATED", f"Election settings updated", "Admin")
     conn.commit()
     conn.close()
@@ -178,7 +179,6 @@ def register_voter(voter: Voter):
         raise HTTPException(status_code=400, detail="Voter ID already registered")
     
     pin = ''.join(random.choices(string.digits, k=6))
-    
     conn.execute("INSERT INTO voters (national_id, name, pin, has_voted, revoked) VALUES (?, ?, ?, ?, ?)", 
                  (voter.national_id, voter.name, pin, False, False))
     log_audit(conn, "VOTER_REGISTERED", f"Registered {voter.name}", "Admin")
@@ -210,41 +210,9 @@ def register_voters_bulk(req: BulkReq):
     conn.close()
     return {"processed": len(req.voters), "results": results}
 
-@app.post("/admin/voters/{national_id}/reset-pin")
-def reset_pin(national_id: str):
-    conn = get_db()
-    voter = conn.execute("SELECT * FROM voters WHERE national_id=?", (national_id,)).fetchone()
-    if not voter:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Voter not found")
-        
-    new_pin = ''.join(random.choices(string.digits, k=6))
-    conn.execute("UPDATE voters SET pin=? WHERE national_id=?", (new_pin, national_id))
-    log_audit(conn, "VOTER_RESET", f"Reset PIN for voter ID {national_id}", "Admin")
-    conn.commit()
-    conn.close()
-    return {"status": "success", "new_pin": new_pin}
-
-@app.put("/admin/voters/{national_id}/revoke")
-def toggle_revoke_voter(national_id: str):
-    conn = get_db()
-    voter = conn.execute("SELECT * FROM voters WHERE national_id=?", (national_id,)).fetchone()
-    if not voter:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Voter not found")
-    
-    new_status = not voter["revoked"]
-    conn.execute("UPDATE voters SET revoked=? WHERE national_id=?", (new_status, national_id))
-    action = "VOTER_REVOKED" if new_status else "VOTER_REINSTATED"
-    log_audit(conn, action, f"Changed status for voter {national_id}", "Admin")
-    conn.commit()
-    conn.close()
-    return {"status": "success", "revoked": new_status}
-    
 @app.get("/admin/voters")
 def get_voters():
     conn = get_db()
-    # Pin is now retrieved so it can be printed on the ID cards
     voters = conn.execute("SELECT national_id, name, pin, has_voted, revoked FROM voters").fetchall()
     conn.close()
     return [dict(v) for v in voters]
@@ -253,10 +221,9 @@ def get_voters():
 @app.post("/voter/login")
 def login_voter(auth: VoterAuth):
     conn = get_db()
-    settings = conn.execute("SELECT status FROM settings WHERE id=1").fetchone()
-    if settings and settings["status"] == "closed":
+    if is_election_closed(conn):
         conn.close()
-        raise HTTPException(status_code=403, detail="Voting is currently closed.")
+        raise HTTPException(status_code=403, detail="Voting is currently closed or the deadline has passed.")
 
     voter = conn.execute("SELECT * FROM voters WHERE national_id=?", (auth.national_id,)).fetchone()
     conn.close()
@@ -277,10 +244,9 @@ def login_voter(auth: VoterAuth):
 @app.post("/vote")
 def cast_vote(vote: Vote):
     conn = get_db()
-    settings = conn.execute("SELECT status FROM settings WHERE id=1").fetchone()
-    if settings and settings["status"] == "closed":
+    if is_election_closed(conn):
         conn.close()
-        raise HTTPException(status_code=403, detail="Voting is currently closed.")
+        raise HTTPException(status_code=403, detail="Voting is currently closed or the deadline has passed.")
 
     voter = conn.execute("SELECT * FROM voters WHERE national_id=?", (vote.national_id,)).fetchone()
     if not voter or voter["has_voted"] or voter["revoked"]:
@@ -288,7 +254,6 @@ def cast_vote(vote: Vote):
         raise HTTPException(status_code=403, detail="Unauthorized, already voted, or revoked")
 
     tracking_code = "UON-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-    
     conn.execute("UPDATE voters SET has_voted=1 WHERE national_id=?", (vote.national_id,))
     
     for cid in vote.candidate_ids:
