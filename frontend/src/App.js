@@ -27,7 +27,6 @@ export default function App() {
   const [voterCreds, setVoterCreds] = useState({ id: '', pin: '' });
   const [activeVoter, setActiveVoter] = useState(null);
   const [receipt, setReceipt] = useState(null);
-  const [message, setMessage] = useState(""); 
 
   useEffect(() => {
     fetch(`${API_BASE}/public-key`).then(r => r.json()).then(setCryptoParams);
@@ -87,7 +86,7 @@ export default function App() {
         }).then(async r => {
           const data = await r.json();
           if (!r.ok) alert(data.detail);
-          else { setActiveVoter(voterCreds.id); setMessage(`Authenticated: ${data.name}`); setView('VOTING'); }
+          else { setActiveVoter(voterCreds.id); setView('VOTING'); }
         });
       }}>Authenticate & Vote</button>
       <button style={{ ...styles.btnOutline, width: '100%', marginTop: '10px' }} onClick={() => setView('HOME')}>Back</button>

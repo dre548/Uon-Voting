@@ -39,11 +39,27 @@ def init_db():
     conn.execute('''CREATE TABLE IF NOT EXISTS audit_log 
                     (id INTEGER PRIMARY KEY AUTOINCREMENT, ts DATETIME DEFAULT CURRENT_TIMESTAMP, action TEXT, details TEXT, actor TEXT)''')
     
+    # --- SAFE MIGRATIONS FOR EXISTING DATABASES ---
+    try: conn.execute("ALTER TABLE voters ADD COLUMN revoked BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError: pass
+    
+    try: conn.execute("ALTER TABLE votes ADD COLUMN ts DATETIME DEFAULT CURRENT_TIMESTAMP")
+    except sqlite3.OperationalError: pass
+    
+    try: conn.execute("ALTER TABLE settings ADD COLUMN positions TEXT")
+    except sqlite3.OperationalError: pass
+
     # Initialize default settings if empty
     if not conn.execute("SELECT * FROM settings").fetchone():
         default_positions = json.dumps(["Presidential", "Gubernatorial", "Senate", "National Assembly", "Women Representative"])
         conn.execute("INSERT INTO settings (id, name, status, positions) VALUES (1, 'UoN General Election', 'open', ?)", (default_positions,))
-    
+    else:
+        # If settings exist but positions is null, initialize it safely
+        curr = conn.execute("SELECT positions FROM settings WHERE id=1").fetchone()
+        if not curr or not curr["positions"]:
+            default_positions = json.dumps(["Presidential", "Gubernatorial", "Senate", "National Assembly", "Women Representative"])
+            conn.execute("UPDATE settings SET positions=? WHERE id=1", (default_positions,))
+            
     conn.commit()
     conn.close()
 
@@ -94,7 +110,11 @@ def get_settings():
     settings = conn.execute("SELECT * FROM settings WHERE id=1").fetchone()
     conn.close()
     s_dict = dict(settings)
-    s_dict["positions"] = json.loads(s_dict["positions"]) if s_dict["positions"] else []
+    
+    if "positions" in s_dict and s_dict["positions"]:
+        s_dict["positions"] = json.loads(s_dict["positions"])
+    else:
+        s_dict["positions"] = ["Presidential", "Gubernatorial", "Senate", "National Assembly", "Women Representative"]
     return s_dict
 
 @app.put("/admin/settings")
