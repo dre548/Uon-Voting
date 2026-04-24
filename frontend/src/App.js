@@ -17,35 +17,38 @@ const styles = {
   badge: { display: 'inline-block', padding: '4px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase' }
 };
 
+function useCountdown(endTime) {
+  const [rem, setRem] = useState('');
+  useEffect(() => {
+    if (!endTime) { setRem(''); return; }
+    const upd = () => {
+      const d = new Date(endTime) - new Date();
+      if (d <= 0) { setRem('ENDED'); return; }
+      const dd = Math.floor(d / 86400000), hh = Math.floor((d % 86400000) / 3600000), mm = Math.floor((d % 3600000) / 60000), ss = Math.floor((d % 60000) / 1000);
+      setRem(`${dd}d ${String(hh).padStart(2, '0')}h ${String(mm).padStart(2, '0')}m ${String(ss).padStart(2, '0')}s`);
+    };
+    upd(); const t = setInterval(upd, 1000); return () => clearInterval(t);
+  }, [endTime]);
+  return rem;
+}
+
 export default function App() {
   const [view, setView] = useState('HOME'); 
   const [candidates, setCandidates] = useState([]);
-  const [cryptoParams, setCryptoParams] = useState(null);
-  const [config, setConfig] = useState({ name: 'UoN General Election', status: 'open', positions: [] });
-  
+  const [config, setConfig] = useState({ name: 'UoN General Election', status: 'open', positions: [], end_time: '' });
   const [adminCreds, setAdminCreds] = useState({ user: '', pass: '' });
   const [voterCreds, setVoterCreds] = useState({ id: '', pin: '' });
   const [activeVoter, setActiveVoter] = useState(null);
   const [receipt, setReceipt] = useState(null);
+  
+  const countdown = useCountdown(config.end_time);
 
   useEffect(() => {
-    fetch(`${API_BASE}/public-key`).then(r => r.json()).then(setCryptoParams);
     fetch(`${API_BASE}/settings`).then(r => r.json()).then(setConfig).catch(() => {});
     refreshCandidates();
   }, [view]);
 
   const refreshCandidates = () => fetch(`${API_BASE}/candidates`).then(r => r.json()).then(setCandidates);
-
-  const modPow = (base, exp, mod) => {
-    let result = 1n, b = window.BigInt(base), e = window.BigInt(exp), m = window.BigInt(mod);
-    while (e > 0n) { if (e % 2n === 1n) result = (result * b) % m; b = (b * b) % m; e /= 2n; }
-    return Number(result);
-  };
-  
-  const generateHash = async (str) => {
-    const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
-    return window.BigInt("0x" + Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('')); 
-  };
 
   const renderHome = () => (
     <div style={{ textAlign: 'center', marginTop: '50px' }}>
@@ -54,8 +57,10 @@ export default function App() {
       <p style={{ fontSize: '1.2em' }}>
         Voting is currently: <strong style={{ color: config.status === 'open' ? 'green' : 'red' }}>{config.status.toUpperCase()}</strong>
       </p>
+      {countdown && <div style={{ fontSize: '1.3em', fontWeight: 'bold', color: countdown === 'ENDED' ? 'red' : COLORS.secondary, margin: '15px 0' }}>⏱ Time Remaining: {countdown}</div>}
       <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '30px', flexWrap: 'wrap' }}>
         <button style={{ ...styles.btn, fontSize: '1.2em', padding: '15px 30px' }} onClick={() => setView('VOTER_LOGIN')}>Cast Your Vote</button>
+        <button style={{ ...styles.btnOutline, fontSize: '1.2em', padding: '15px 30px', color: '#1B3A6B', borderColor: '#1B3A6B' }} onClick={() => setView('VERIFY_RECEIPT')}>Verify My Receipt</button>
         <button style={styles.btnOutline} onClick={() => setView('ADMIN_LOGIN')}>Admin / Election Officials</button>
       </div>
     </div>
@@ -93,9 +98,47 @@ export default function App() {
     </div>
   );
 
+  const renderVerifyReceipt = () => {
+      const [code, setCode] = useState('');
+      const [result, setResult] = useState(null);
+      return (
+        <div style={{ ...styles.card, maxWidth: '500px', margin: '50px auto' }}>
+          <h2 style={{ color: COLORS.primary }}>Verify Public Receipt</h2>
+          <p>Enter your tracking code to verify your vote was counted.</p>
+          <input style={styles.input} placeholder="UON-XXXXXXXXXX" onChange={e => setCode(e.target.value)} />
+          <button style={{ ...styles.btn, width: '100%' }} onClick={() => {
+            fetch(`${API_BASE}/verify/${code}`)
+              .then(async r => {
+                const data = await r.json();
+                if (!r.ok) { setResult(null); alert(data.detail); } else setResult(data);
+              });
+          }}>Verify Now</button>
+          
+          {result && (
+            <div style={{ marginTop: '20px', padding: '15px', background: '#e8f5e9', borderRadius: '8px' }}>
+              <h3 style={{ margin: '0 0 10px 0', color: COLORS.primary }}>✅ Vote Verified</h3>
+              <p><strong>Timestamp:</strong> {new Date(result.ts + 'Z').toLocaleString()}</p>
+              <div style={{marginTop: '15px'}}>
+                 {result.positions.map((p, idx) => (
+                   <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px', background: '#fff', padding: '10px', borderRadius: '5px', border: '1px solid #ccc' }}>
+                      {p.photo_url ? <img src={p.photo_url} style={{width: '45px', height: '45px', borderRadius: '50%', objectFit: 'cover'}} alt=""/> : <div style={{width: '45px', height: '45px', borderRadius: '50%', background: '#ccc'}}></div>}
+                      <div>
+                          <div style={{fontSize: '11px', color: '#666', textTransform: 'uppercase'}}>{p.position}</div>
+                          <div><strong>{p.candidate_name}</strong> ({p.party})</div>
+                      </div>
+                   </div>
+                 ))}
+              </div>
+            </div>
+          )}
+          <button style={{ ...styles.btnOutline, width: '100%', marginTop: '20px' }} onClick={() => setView('HOME')}>Back to Home</button>
+        </div>
+      );
+  };
+
   return (
     <div style={styles.container}>
-      {view !== 'HOME' && view !== 'RECEIPT' && view !== 'VOTING' && (
+      {view !== 'HOME' && view !== 'RECEIPT' && view !== 'VOTING' && view !== 'VERIFY_RECEIPT' && (
         <div style={styles.header}>
           <h2 style={{ margin: 0, color: COLORS.primary }}>UoN E-Voting</h2>
           <button style={styles.btnOutline} onClick={() => { setActiveVoter(null); setView('HOME'); }}>Exit</button>
@@ -103,9 +146,10 @@ export default function App() {
       )}
       
       {view === 'HOME' && renderHome()}
+      {view === 'VERIFY_RECEIPT' && renderVerifyReceipt()}
       {view === 'ADMIN_LOGIN' && renderAdminLogin()}
       {view === 'VOTER_LOGIN' && renderVoterLogin()}
-      {view === 'VOTING' && <VotingBooth activeVoter={activeVoter} candidates={candidates} config={config} cryptoParams={cryptoParams} generateHash={generateHash} modPow={modPow} onComplete={(code) => { setReceipt(code); setView('RECEIPT'); }} onExit={() => setView('HOME')} />}
+      {view === 'VOTING' && <VotingBooth countdown={countdown} activeVoter={activeVoter} candidates={candidates} config={config} onComplete={(code) => { setReceipt(code); setView('RECEIPT'); }} onExit={() => setView('HOME')} />}
       {view === 'RECEIPT' && (
         <div style={{ ...styles.card, textAlign: 'center', marginTop: '50px', backgroundColor: '#e8f5e9' }}>
           <h1 style={{ color: COLORS.primary }}>Vote Cast Successfully!</h1>
@@ -119,8 +163,8 @@ export default function App() {
   );
 }
 
-// --- VOTING BOOTH (HTML Stepper Logic) ---
-function VotingBooth({ activeVoter, candidates, config, cryptoParams, generateHash, modPow, onComplete, onExit }) {
+// --- VOTING BOOTH ---
+function VotingBooth({ countdown, activeVoter, candidates, config, onComplete, onExit }) {
   const [selections, setSelections] = useState({});
   const [boothPos, setBoothPos] = useState(0);
   const [phase, setPhase] = useState('voting');
@@ -143,20 +187,12 @@ function VotingBooth({ activeVoter, candidates, config, cryptoParams, generateHa
   const skip = () => { setSelections(p => ({...p, [currPos]: 'SKIP'})); if (isLast) setPhase('review'); else setBoothPos(p => p + 1); };
 
   const submitFinalBallot = async () => {
-    const validSelectionPos = Object.keys(selections).find(k => selections[k] !== 'SKIP');
-    if(!validSelectionPos) { alert("You must select at least one candidate."); return; }
+    const selectedCandIds = Object.values(selections).filter(v => v !== 'SKIP');
+    if(selectedCandIds.length === 0) { alert("You must select at least one candidate."); return; }
     
-    const candId = selections[validSelectionPos];
-    const { p, g, Y } = cryptoParams;
-    const m = modPow(g, candId, p), r = Math.floor(Math.random() * (p - 2)) + 1;
-    const alpha = modPow(g, r, p), beta = (m * modPow(Y, r, p)) % p;
-    const k = Math.floor(Math.random() * (p - 2)) + 1, t = modPow(g, k, p);
-    const c = Number((await generateHash(`${alpha}${beta}${t}`)) % window.BigInt(p - 1));
-    const s = (k + (c * r)) % (p - 1);
-
     fetch(`${API_BASE}/vote`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ alpha: String(alpha), beta: String(beta), t: String(t), s: String(s), national_id: activeVoter, candidate_id: candId })
+      body: JSON.stringify({ national_id: activeVoter, candidate_ids: selectedCandIds })
     }).then(async res => {
       const data = await res.json();
       if (res.ok) onComplete(data.tracking_code); else alert("Error: " + data.detail);
@@ -166,7 +202,10 @@ function VotingBooth({ activeVoter, candidates, config, cryptoParams, generateHa
   if (phase === 'review') {
     return (
       <div style={styles.card}>
-        <h2 style={{ color: COLORS.primary }}>Review Your Selections</h2>
+        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+            <h2 style={{ color: COLORS.primary }}>Review Your Selections</h2>
+            {countdown && <div style={{fontWeight: 'bold', color: 'red'}}>⏱ {countdown}</div>}
+        </div>
         <div style={{ background: '#fffbee', padding: '10px', borderRadius: '5px', marginBottom: '15px', color: '#92400e' }}>⚠ Please review carefully. Once submitted, your ballot cannot be changed.</div>
         {votingPositions.map(pos => {
           const sel = selections[pos];
@@ -174,8 +213,13 @@ function VotingBooth({ activeVoter, candidates, config, cryptoParams, generateHa
           return (
             <div key={pos} style={{ display: 'flex', alignItems: 'center', padding: '15px', border: '1px solid #ddd', borderRadius: '8px', marginBottom: '10px', background: cand ? '#f0fdf4' : '#fef2f2' }}>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '11px', textTransform: 'uppercase', color: '#666' }}>{pos}</div>
-                {cand ? <div><strong>{cand.name}</strong> ({cand.party})</div> : <div style={{ color: 'red' }}>Not Selected / Skipped</div>}
+                <div style={{ fontSize: '11px', textTransform: 'uppercase', color: '#666', marginBottom: '5px' }}>{pos}</div>
+                {cand ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                        {cand.photo_url ? <img src={cand.photo_url} style={{width: '45px', height: '45px', borderRadius: '50%', objectFit: 'cover'}} alt=""/> : <div style={{width: '45px', height: '45px', borderRadius: '50%', background: '#ccc'}}></div>}
+                        <div><strong>{cand.name}</strong> ({cand.party})</div>
+                    </div>
+                ) : <div style={{ color: 'red', fontWeight: 'bold' }}>Not Selected / Skipped</div>}
               </div>
             </div>
           );
@@ -190,9 +234,12 @@ function VotingBooth({ activeVoter, candidates, config, cryptoParams, generateHa
 
   return (
     <div style={styles.card}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px', alignItems: 'center' }}>
         <h2>{currPos}</h2>
-        <span style={{ color: '#666' }}>Position {boothPos + 1} of {votingPositions.length}</span>
+        <div>
+            {countdown && <span style={{ color: 'red', fontWeight: 'bold', marginRight: '15px' }}>⏱ {countdown}</span>}
+            <span style={{ color: '#666' }}>Position {boothPos + 1} of {votingPositions.length}</span>
+        </div>
       </div>
       
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', marginBottom: '20px' }}>
@@ -220,6 +267,7 @@ function VotingBooth({ activeVoter, candidates, config, cryptoParams, generateHa
 function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
   const [tab, setTab] = useState('OVERVIEW');
   const [newCand, setNewCand] = useState({ name: '', party: '', position: config.positions[0] || '', photo_url: '' });
+  const [editingId, setEditingId] = useState(null);
   const [candFilter, setCandFilter] = useState('All');
   const [newVoter, setNewVoter] = useState({ name: '', national_id: '' });
   const [voters, setVoters] = useState([]);
@@ -242,9 +290,55 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
     reader.readAsDataURL(file);
   };
 
+  const startEdit = (c) => {
+    setNewCand({ name: c.name, party: c.party, position: c.position, photo_url: c.photo_url || '' });
+    setEditingId(c.id);
+  };
+
   const saveCandidate = () => {
-    fetch(`${API_BASE}/admin/candidates`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newCand) })
-      .then(() => { alert('Candidate Registered!'); refreshCandidates(); setNewCand({ name: '', party: '', position: config.positions[0] || '', photo_url: '' }); });
+    const url = editingId ? `${API_BASE}/admin/candidates/${editingId}` : `${API_BASE}/admin/candidates`;
+    const method = editingId ? 'PUT' : 'POST';
+
+    fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newCand) })
+      .then(() => { 
+        alert(editingId ? 'Candidate Updated!' : 'Candidate Registered!'); 
+        refreshCandidates(); 
+        setNewCand({ name: '', party: '', position: config.positions[0] || '', photo_url: '' }); 
+        setEditingId(null);
+      });
+  };
+
+  const handleBulkUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const rows = event.target.result.split('\n').filter(row => row.trim() !== '');
+      const parsedVoters = rows.map(row => {
+        const [name, national_id] = row.split(',');
+        return { name: name?.trim(), national_id: national_id?.trim() };
+      }).filter(v => v.name && v.national_id);
+
+      if (parsedVoters.length === 0) { alert("No valid data found."); return; }
+
+      fetch(`${API_BASE}/admin/voters/bulk`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voters: parsedVoters })
+      }).then(async r => {
+        const data = await r.json();
+        let csvContent = "data:text/csv;charset=utf-8,Name,National ID,Status,Secure PIN\n";
+        data.results.forEach(res => { csvContent += `${res.name},${res.national_id},${res.status},${res.pin}\n`; });
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", "UoN_Voter_PINs.csv");
+        document.body.appendChild(link);
+        link.click();
+        alert(`Bulk registration complete! Downloading PIN spreadsheet.`);
+        fetchVoters();
+      });
+    };
+    reader.readAsText(file);
   };
 
   const regVoter = () => {
@@ -270,8 +364,6 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
 
     getBase64Image(uonLogo).then(base64Logo => {
         const activeVoters = voters.filter(v => !v.revoked);
-        
-        // Generate the individual cards dynamically
         const cards = activeVoters.map(v => `
           <div class="card">
             <div style="text-align: center; margin-bottom: 8px;">
@@ -281,18 +373,13 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
             <div class="name">${v.name}</div>
             <div class="nid">National ID: ${v.national_id}</div>
             <div class="plabel">Voter PIN</div>
-            <div class="pin">${v.pin}</div>
+            <div class="pin">${v.pin && v.pin !== '*****' ? v.pin : 'CHECK SPREADSHEET'}</div>
             <div class="warn">CONFIDENTIAL &mdash; DO NOT SHARE</div>
           </div>
         `).join('');
 
-        // Wrap the cards in your exact HTML/CSS template
         const htmlTemplate = `
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <meta charset="UTF-8">
-            <title>Voter PIN Cards</title>
+          <!DOCTYPE html><html><head><meta charset="UTF-8"><title>Voter PIN Cards</title>
             <style>
               * { box-sizing: border-box; margin: 0; padding: 0 }
               body { font-family: Arial, sans-serif; background: #eee; padding: 10px }
@@ -306,12 +393,7 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
               .warn { font-size: 8px; color: #DC2626; text-align: center; border-top: 1px solid #eee; padding-top: 4px; margin-top: 2px; font-weight: 600 }
               @media print { body { background: #fff; padding: 0 } .grid { gap: 4px } }
             </style>
-          </head>
-          <body>
-            <div class="grid">${cards}</div>
-            <script>window.onload = () => { window.print(); }</script>
-          </body>
-          </html>
+          </head><body><div class="grid">${cards}</div><script>window.onload = () => { window.print(); }</script></body></html>
         `;
 
         const newWin = window.open('', '', 'width=800,height=600');
@@ -350,7 +432,7 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
       {tab === 'CANDIDATES' && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '20px' }}>
           <div style={styles.card}>
-            <h3>Register Candidate</h3>
+            <h3>{editingId ? "Edit Candidate" : "Register Candidate"}</h3>
             <div style={{ textAlign: 'center', marginBottom: '15px' }}>
               <div onClick={() => fileRef.current && fileRef.current.click()} style={{ width: '100px', height: '100px', borderRadius: '50%', margin: '0 auto', background: '#f4f7f6', border: '2px dashed #ccc', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden' }}>
                 {newCand.photo_url ? <img src={newCand.photo_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="Upload" /> : "📷"}
@@ -363,7 +445,8 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
                 <option value="">Select Position...</option>
                 {config.positions.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
-            <button style={{...styles.btn, width: '100%'}} onClick={saveCandidate}>Add Candidate</button>
+            <button style={{...styles.btn, width: '100%'}} onClick={saveCandidate}>{editingId ? "Update Details" : "Add Candidate"}</button>
+            {editingId && <button style={{...styles.btnOutline, width: '100%', marginTop: '10px'}} onClick={() => { setEditingId(null); setNewCand({ name: '', party: '', position: config.positions[0] || '', photo_url: '' }); }}>Cancel Edit</button>}
           </div>
           
           <div style={styles.card}>
@@ -382,6 +465,7 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
                     <strong>{c.name}</strong>
                     <div style={{ fontSize: '12px', color: '#666' }}>{c.party} &bull; <span style={{...styles.badge, background: '#dbeafe', color: '#1e40af'}}>{c.position}</span></div>
                   </div>
+                  <button style={{...styles.btnOutline, marginRight: '10px'}} onClick={() => startEdit(c)}>Edit</button>
                   <button style={{...styles.btnOutline, color: 'red', borderColor: 'red'}} onClick={() => fetch(`${API_BASE}/admin/candidates/${c.id}`, { method: 'DELETE' }).then(refreshCandidates)}>Remove</button>
                 </li>
               ))}
@@ -401,6 +485,13 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
             <input style={{...styles.input, flex: 1}} placeholder="National ID" onChange={e => setNewVoter({...newVoter, national_id: e.target.value})} />
             <button style={{ ...styles.btn, height: '42px' }} onClick={regVoter}>Register</button>
           </div>
+          
+          <hr style={{ margin: '20px 0', border: '1px solid #eee' }} />
+          <h3>Bulk Registration (CSV Upload)</h3>
+          <p style={{ fontSize: '0.9em', color: '#666' }}>Upload a .csv file formatted with two columns: <b>Name, National_ID</b>.</p>
+          <input type="file" accept=".csv" onChange={handleBulkUpload} style={{ padding: '10px', border: '2px dashed #ccc', width: '100%', boxSizing: 'border-box' }} />
+
+          <h3 style={{marginTop: '30px'}}>Registry List</h3>
           <ul style={{ listStyle: 'none', padding: 0 }}>
             {voters.map(v => (
               <li key={v.national_id} style={{ padding: '10px', borderBottom: '1px solid #ccc', display: 'flex', justifyContent: 'space-between', background: v.revoked ? '#ffebee' : 'transparent' }}>
@@ -454,11 +545,16 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
           <h2>Election Settings</h2>
           <label style={{ display: 'block', fontWeight: 'bold' }}>Election Name</label>
           <input style={styles.input} value={config.name} onChange={e => setConfig({...config, name: e.target.value})} />
+          
           <label style={{ display: 'block', fontWeight: 'bold', marginTop: '10px' }}>Voting Status</label>
           <select style={styles.input} value={config.status} onChange={e => setConfig({...config, status: e.target.value})}>
             <option value="open">🟢 Open (Voting Allowed)</option>
             <option value="closed">🔴 Closed (Voting Disabled)</option>
           </select>
+
+          <label style={{ display: 'block', fontWeight: 'bold', marginTop: '10px' }}>Election Deadline (Countdown Timer)</label>
+          <input type="datetime-local" style={styles.input} value={config.end_time || ''} onChange={e => setConfig({...config, end_time: e.target.value})} />
+          
           <label style={{ display: 'block', fontWeight: 'bold', marginTop: '10px', marginBottom: '5px' }}>Ballot Positions</label>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
             {config.positions.map(p => (

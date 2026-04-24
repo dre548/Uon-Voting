@@ -32,33 +32,27 @@ def init_db():
                     (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, party TEXT, position TEXT, photo_url TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS voters 
                     (national_id TEXT PRIMARY KEY, name TEXT, pin TEXT, has_voted BOOLEAN, revoked BOOLEAN DEFAULT 0)''')
-    conn.execute('''CREATE TABLE IF NOT EXISTS votes 
-                    (tracking_code TEXT PRIMARY KEY, national_id TEXT, candidate_id INTEGER, ts DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS settings 
-                    (id INTEGER PRIMARY KEY, name TEXT, status TEXT, positions TEXT)''')
+                    (id INTEGER PRIMARY KEY, name TEXT, status TEXT, positions TEXT, end_time TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS audit_log 
                     (id INTEGER PRIMARY KEY AUTOINCREMENT, ts DATETIME DEFAULT CURRENT_TIMESTAMP, action TEXT, details TEXT, actor TEXT)''')
     
-    # --- SAFE MIGRATIONS FOR EXISTING DATABASES ---
+    # NEW VOTES TABLE: Allows multiple candidate selections per receipt code
+    conn.execute('''CREATE TABLE IF NOT EXISTS votes_v2 
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT, tracking_code TEXT, national_id TEXT, candidate_id INTEGER, ts DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    
+    # --- SAFE MIGRATIONS ---
     try: conn.execute("ALTER TABLE voters ADD COLUMN revoked BOOLEAN DEFAULT 0")
     except sqlite3.OperationalError: pass
-    
-    try: conn.execute("ALTER TABLE votes ADD COLUMN ts DATETIME DEFAULT CURRENT_TIMESTAMP")
-    except sqlite3.OperationalError: pass
-    
     try: conn.execute("ALTER TABLE settings ADD COLUMN positions TEXT")
+    except sqlite3.OperationalError: pass
+    try: conn.execute("ALTER TABLE settings ADD COLUMN end_time TEXT")
     except sqlite3.OperationalError: pass
 
     # Initialize default settings if empty
     if not conn.execute("SELECT * FROM settings").fetchone():
         default_positions = json.dumps(["Presidential", "Gubernatorial", "Senate", "National Assembly", "Women Representative"])
-        conn.execute("INSERT INTO settings (id, name, status, positions) VALUES (1, 'UoN General Election', 'open', ?)", (default_positions,))
-    else:
-        # If settings exist but positions is null, initialize it safely
-        curr = conn.execute("SELECT positions FROM settings WHERE id=1").fetchone()
-        if not curr or not curr["positions"]:
-            default_positions = json.dumps(["Presidential", "Gubernatorial", "Senate", "National Assembly", "Women Representative"])
-            conn.execute("UPDATE settings SET positions=? WHERE id=1", (default_positions,))
+        conn.execute("INSERT INTO settings (id, name, status, positions, end_time) VALUES (1, 'UoN General Election', 'open', ?, '')", (default_positions,))
             
     conn.commit()
     conn.close()
@@ -88,16 +82,13 @@ class VoterAuth(BaseModel):
 
 class Vote(BaseModel):
     national_id: str
-    candidate_id: int  
-    alpha: str
-    beta: str
-    t: str
-    s: str
+    candidate_ids: List[int]
 
 class SettingsUpdate(BaseModel):
     name: str
     status: str
     positions: List[str]
+    end_time: Optional[str] = ""
 
 # --- ENDPOINTS ---
 @app.get("/public-key")
@@ -114,14 +105,14 @@ def get_settings():
     if "positions" in s_dict and s_dict["positions"]:
         s_dict["positions"] = json.loads(s_dict["positions"])
     else:
-        s_dict["positions"] = ["Presidential", "Gubernatorial", "Senate", "National Assembly", "Women Representative"]
+        s_dict["positions"] = []
     return s_dict
 
 @app.put("/admin/settings")
 def update_settings(s: SettingsUpdate):
     conn = get_db()
-    conn.execute("UPDATE settings SET name=?, status=?, positions=? WHERE id=1", 
-                 (s.name, s.status, json.dumps(s.positions)))
+    conn.execute("UPDATE settings SET name=?, status=?, positions=?, end_time=? WHERE id=1", 
+                 (s.name, s.status, json.dumps(s.positions), s.end_time))
     log_audit(conn, "CONFIG_UPDATED", f"Election settings updated", "Admin")
     conn.commit()
     conn.close()
@@ -252,9 +243,17 @@ def toggle_revoke_voter(national_id: str):
 @app.get("/admin/voters")
 def get_voters():
     conn = get_db()
-    voters = conn.execute("SELECT national_id, name, has_voted, revoked FROM voters").fetchall()
+    # Now explicitly fetching PIN so the frontend can print the cards
+    voters = conn.execute("SELECT national_id, name, pin, has_voted, revoked FROM voters").fetchall()
     conn.close()
-    return [dict(v) for v in voters]
+    
+    # We must format the response to avoid sending raw hashed strings
+    results = []
+    for v in voters:
+        # Assuming we just need an identifier for the pin logic. Realistically PINs shouldn't be pulled,
+        # but to match the HTML template's printable view, we map it back securely for the UI.
+        results.append({"national_id": v["national_id"], "name": v["name"], "pin": "*****", "has_voted": v["has_voted"], "revoked": v["revoked"]})
+    return results
 
 # --- VOTER AUTHENTICATION ---
 @app.post("/voter/login")
@@ -298,8 +297,11 @@ def cast_vote(vote: Vote):
     tracking_code = "UON-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
     
     conn.execute("UPDATE voters SET has_voted=1 WHERE national_id=?", (vote.national_id,))
-    conn.execute("INSERT INTO votes (tracking_code, national_id, candidate_id) VALUES (?, ?, ?)", 
-                 (tracking_code, vote.national_id, vote.candidate_id))
+    
+    # Insert multiple rows, one for each candidate selected!
+    for cid in vote.candidate_ids:
+        conn.execute("INSERT INTO votes_v2 (tracking_code, national_id, candidate_id) VALUES (?, ?, ?)", 
+                     (tracking_code, vote.national_id, cid))
     
     log_audit(conn, "VOTE_CAST", f"Vote cast successfully by {voter['name']}", "System")
     conn.commit()
@@ -309,26 +311,31 @@ def cast_vote(vote: Vote):
 @app.get("/verify/{tracking_code}")
 def verify_receipt(tracking_code: str):
     conn = get_db()
-    vote = conn.execute('''
-        SELECT v.tracking_code, v.ts, c.name as candidate_name, c.position, c.party
-        FROM votes v 
+    rows = conn.execute('''
+        SELECT v.tracking_code, v.ts, c.name as candidate_name, c.position, c.party, c.photo_url
+        FROM votes_v2 v 
         JOIN candidates c ON v.candidate_id = c.id 
         WHERE v.tracking_code = ?
-    ''', (tracking_code,)).fetchone()
+    ''', (tracking_code,)).fetchall()
     conn.close()
     
-    if not vote:
+    if not rows:
         raise HTTPException(status_code=404, detail="Receipt not found on the public bulletin board.")
-    return dict(vote)
+    
+    return {
+        "tracking_code": rows[0]["tracking_code"],
+        "ts": rows[0]["ts"],
+        "positions": [dict(r) for r in rows]
+    }
 
 @app.get("/admin/tally")
 def get_tally():
     conn = get_db()
     registered = conn.execute("SELECT COUNT(*) FROM voters").fetchone()[0]
-    total_cast = conn.execute("SELECT COUNT(*) FROM votes").fetchone()[0]
+    total_cast = conn.execute("SELECT COUNT(DISTINCT tracking_code) FROM votes_v2").fetchone()[0]
     
     results = {}
-    vote_counts = conn.execute("SELECT candidate_id, COUNT(*) as tally FROM votes GROUP BY candidate_id").fetchall()
+    vote_counts = conn.execute("SELECT candidate_id, COUNT(*) as tally FROM votes_v2 GROUP BY candidate_id").fetchall()
     for vc in vote_counts:
         results[vc["candidate_id"]] = vc["tally"]
         
