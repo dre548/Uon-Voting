@@ -6,7 +6,6 @@ from typing import List, Optional
 import sqlite3
 import random
 import string
-import hashlib
 import json
 from datetime import datetime
 
@@ -48,6 +47,13 @@ def init_db():
     except sqlite3.OperationalError: pass
     try: conn.execute("ALTER TABLE settings ADD COLUMN end_time TEXT")
     except sqlite3.OperationalError: pass
+
+    # Fix PINs for printing: Convert any old hashed PINs to raw 6-digit PINs
+    voters = conn.execute("SELECT national_id, pin FROM voters").fetchall()
+    for v in voters:
+        if len(str(v["pin"])) > 6:
+            new_pin = ''.join(random.choices(string.digits, k=6))
+            conn.execute("UPDATE voters SET pin=? WHERE national_id=?", (new_pin, v["national_id"]))
 
     # Initialize default settings if empty
     if not conn.execute("SELECT * FROM settings").fetchone():
@@ -138,7 +144,7 @@ def add_candidate(cand: Candidate):
     conn = get_db()
     conn.execute("INSERT INTO candidates (name, party, position, photo_url) VALUES (?, ?, ?, ?)", 
                  (cand.name, cand.party, cand.position, cand.photo_url))
-    log_audit(conn, "CANDIDATE_REGISTERED", f"{cand.name} added for {cand.position}", "Admin")
+    log_audit(conn, "CANDIDATE_REGISTERED", f"{cand.name} added", "Admin")
     conn.commit()
     conn.close()
     return {"status": "success"}
@@ -172,11 +178,10 @@ def register_voter(voter: Voter):
         raise HTTPException(status_code=400, detail="Voter ID already registered")
     
     pin = ''.join(random.choices(string.digits, k=6))
-    hashed_pin = hashlib.sha256(pin.encode()).hexdigest()
     
     conn.execute("INSERT INTO voters (national_id, name, pin, has_voted, revoked) VALUES (?, ?, ?, ?, ?)", 
-                 (voter.national_id, voter.name, hashed_pin, False, False))
-    log_audit(conn, "VOTER_REGISTERED", f"Registered {voter.name} ({voter.national_id})", "Admin")
+                 (voter.national_id, voter.name, pin, False, False))
+    log_audit(conn, "VOTER_REGISTERED", f"Registered {voter.name}", "Admin")
     conn.commit()
     conn.close()
     return {"status": "success", "pin": pin}
@@ -194,15 +199,13 @@ def register_voters_bulk(req: BulkReq):
             continue
         
         pin = ''.join(random.choices(string.digits, k=6))
-        hashed_pin = hashlib.sha256(pin.encode()).hexdigest()
-        
         conn.execute("INSERT INTO voters (national_id, name, pin, has_voted, revoked) VALUES (?, ?, ?, ?, ?)", 
-                     (v.national_id, v.name, hashed_pin, False, False))
+                     (v.national_id, v.name, pin, False, False))
         
         results.append({"national_id": v.national_id, "name": v.name, "status": "Registered", "pin": pin})
         registered_count += 1
         
-    log_audit(conn, "BULK_IMPORT", f"Imported {registered_count} voters via CSV", "Admin")
+    log_audit(conn, "BULK_IMPORT", f"Imported {registered_count} voters", "Admin")
     conn.commit()
     conn.close()
     return {"processed": len(req.voters), "results": results}
@@ -216,9 +219,7 @@ def reset_pin(national_id: str):
         raise HTTPException(status_code=404, detail="Voter not found")
         
     new_pin = ''.join(random.choices(string.digits, k=6))
-    hashed_pin = hashlib.sha256(new_pin.encode()).hexdigest()
-    
-    conn.execute("UPDATE voters SET pin=? WHERE national_id=?", (hashed_pin, national_id))
+    conn.execute("UPDATE voters SET pin=? WHERE national_id=?", (new_pin, national_id))
     log_audit(conn, "VOTER_RESET", f"Reset PIN for voter ID {national_id}", "Admin")
     conn.commit()
     conn.close()
@@ -235,7 +236,7 @@ def toggle_revoke_voter(national_id: str):
     new_status = not voter["revoked"]
     conn.execute("UPDATE voters SET revoked=? WHERE national_id=?", (new_status, national_id))
     action = "VOTER_REVOKED" if new_status else "VOTER_REINSTATED"
-    log_audit(conn, action, f"Changed revocation status for voter ID {national_id} to {new_status}", "Admin")
+    log_audit(conn, action, f"Changed status for voter {national_id}", "Admin")
     conn.commit()
     conn.close()
     return {"status": "success", "revoked": new_status}
@@ -243,17 +244,10 @@ def toggle_revoke_voter(national_id: str):
 @app.get("/admin/voters")
 def get_voters():
     conn = get_db()
-    # Now explicitly fetching PIN so the frontend can print the cards
+    # Pin is now retrieved so it can be printed on the ID cards
     voters = conn.execute("SELECT national_id, name, pin, has_voted, revoked FROM voters").fetchall()
     conn.close()
-    
-    # We must format the response to avoid sending raw hashed strings
-    results = []
-    for v in voters:
-        # Assuming we just need an identifier for the pin logic. Realistically PINs shouldn't be pulled,
-        # but to match the HTML template's printable view, we map it back securely for the UI.
-        results.append({"national_id": v["national_id"], "name": v["name"], "pin": "*****", "has_voted": v["has_voted"], "revoked": v["revoked"]})
-    return results
+    return [dict(v) for v in voters]
 
 # --- VOTER AUTHENTICATION ---
 @app.post("/voter/login")
@@ -274,8 +268,7 @@ def login_voter(auth: VoterAuth):
     if voter["has_voted"]:
         raise HTTPException(status_code=403, detail="Voter has already cast a ballot")
         
-    hashed_input = hashlib.sha256(auth.pin.encode()).hexdigest()
-    if hashed_input != voter["pin"]:
+    if str(auth.pin) != str(voter["pin"]):
         raise HTTPException(status_code=401, detail="Invalid PIN")
         
     return {"status": "authenticated", "name": voter["name"]}
@@ -298,7 +291,6 @@ def cast_vote(vote: Vote):
     
     conn.execute("UPDATE voters SET has_voted=1 WHERE national_id=?", (vote.national_id,))
     
-    # Insert multiple rows, one for each candidate selected!
     for cid in vote.candidate_ids:
         conn.execute("INSERT INTO votes_v2 (tracking_code, national_id, candidate_id) VALUES (?, ?, ?)", 
                      (tracking_code, vote.national_id, cid))
@@ -320,7 +312,7 @@ def verify_receipt(tracking_code: str):
     conn.close()
     
     if not rows:
-        raise HTTPException(status_code=404, detail="Receipt not found on the public bulletin board.")
+        raise HTTPException(status_code=404, detail="Receipt not found on the bulletin board.")
     
     return {
         "tracking_code": rows[0]["tracking_code"],

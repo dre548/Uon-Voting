@@ -319,7 +319,7 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
         return { name: name?.trim(), national_id: national_id?.trim() };
       }).filter(v => v.name && v.national_id);
 
-      if (parsedVoters.length === 0) { alert("No valid data found."); return; }
+      if (parsedVoters.length === 0) { alert("No valid data found. Use format: Name,National_ID"); return; }
 
       fetch(`${API_BASE}/admin/voters/bulk`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -373,7 +373,7 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
             <div class="name">${v.name}</div>
             <div class="nid">National ID: ${v.national_id}</div>
             <div class="plabel">Voter PIN</div>
-            <div class="pin">${v.pin && v.pin !== '*****' ? v.pin : 'CHECK SPREADSHEET'}</div>
+            <div class="pin">${v.pin}</div>
             <div class="warn">CONFIDENTIAL &mdash; DO NOT SHARE</div>
           </div>
         `).join('');
@@ -488,7 +488,7 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
           
           <hr style={{ margin: '20px 0', border: '1px solid #eee' }} />
           <h3>Bulk Registration (CSV Upload)</h3>
-          <p style={{ fontSize: '0.9em', color: '#666' }}>Upload a .csv file formatted with two columns: <b>Name, National_ID</b>.</p>
+          <p style={{ fontSize: '0.9em', color: '#666' }}>Upload a .csv file formatted with two columns: <b>Name, National_ID</b> (no header row).</p>
           <input type="file" accept=".csv" onChange={handleBulkUpload} style={{ padding: '10px', border: '2px dashed #ccc', width: '100%', boxSizing: 'border-box' }} />
 
           <h3 style={{marginTop: '30px'}}>Registry List</h3>
