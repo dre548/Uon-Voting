@@ -1,14 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import uonLogo from './uon-logo.jpeg'; 
 
 const API_BASE = 'https://uon-voting-backends.onrender.com';
 
 const COLORS = {
-  primary: '#004d28', 
-  secondary: '#d4af37', 
-  background: '#f4f7f6',
-  surface: '#ffffff',
-  text: '#333333'
+  primary: '#004d28', secondary: '#d4af37', background: '#f4f7f6', surface: '#ffffff', text: '#333333', border: '#DDE3EE'
 };
 
 const styles = {
@@ -17,22 +13,21 @@ const styles = {
   btn: { backgroundColor: COLORS.primary, color: 'white', border: 'none', padding: '10px 20px', cursor: 'pointer', borderRadius: '5px', fontWeight: 'bold' },
   btnOutline: { backgroundColor: 'transparent', color: COLORS.primary, border: `2px solid ${COLORS.primary}`, padding: '8px 16px', cursor: 'pointer', borderRadius: '5px' },
   card: { backgroundColor: COLORS.surface, padding: '20px', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', marginBottom: '20px' },
-  input: { width: '100%', padding: '10px', marginBottom: '10px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box' }
+  input: { width: '100%', padding: '10px', marginBottom: '10px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box' },
+  badge: { display: 'inline-block', padding: '4px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase' }
 };
 
 export default function App() {
   const [view, setView] = useState('HOME'); 
   const [candidates, setCandidates] = useState([]);
   const [cryptoParams, setCryptoParams] = useState(null);
-  const [config, setConfig] = useState({ name: 'UoN General Election', status: 'open' });
+  const [config, setConfig] = useState({ name: 'UoN General Election', status: 'open', positions: [] });
   
   const [adminCreds, setAdminCreds] = useState({ user: '', pass: '' });
   const [voterCreds, setVoterCreds] = useState({ id: '', pin: '' });
   const [activeVoter, setActiveVoter] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [message, setMessage] = useState(""); 
-  const [verifyCode, setVerifyCode] = useState("");
-  const [verifyResult, setVerifyResult] = useState(null);
 
   useEffect(() => {
     fetch(`${API_BASE}/public-key`).then(r => r.json()).then(setCryptoParams);
@@ -62,7 +57,6 @@ export default function App() {
       </p>
       <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '30px', flexWrap: 'wrap' }}>
         <button style={{ ...styles.btn, fontSize: '1.2em', padding: '15px 30px' }} onClick={() => setView('VOTER_LOGIN')}>Cast Your Vote</button>
-        <button style={{...styles.btnOutline, fontSize: '1.2em', padding: '15px 30px'}} onClick={() => setView('VERIFY_RECEIPT')}>Verify My Receipt</button>
         <button style={styles.btnOutline} onClick={() => setView('ADMIN_LOGIN')}>Admin / Election Officials</button>
       </div>
     </div>
@@ -74,12 +68,8 @@ export default function App() {
       <input style={styles.input} placeholder="Username" onChange={e => setAdminCreds({...adminCreds, user: e.target.value})} />
       <input style={styles.input} type="password" placeholder="Password" onChange={e => setAdminCreds({...adminCreds, pass: e.target.value})} />
       <button style={{ ...styles.btn, width: '100%' }} onClick={() => {
-        if (adminCreds.user === 'admin' && adminCreds.pass === 'admin123') {
-            setMessage("Admin authenticated successfully.");
-            setView('ADMIN_DASHBOARD');
-        } else {
-            alert('Invalid credentials');
-        }
+        if (adminCreds.user === 'admin' && adminCreds.pass === 'admin123') { setView('ADMIN_DASHBOARD'); } 
+        else { alert('Invalid credentials'); }
       }}>Login</button>
       <button style={{ ...styles.btnOutline, width: '100%', marginTop: '10px' }} onClick={() => setView('HOME')}>Back</button>
     </div>
@@ -88,7 +78,7 @@ export default function App() {
   const renderVoterLogin = () => (
     <div style={{ ...styles.card, maxWidth: '400px', margin: '50px auto' }}>
       <h2 style={{ color: COLORS.primary }}>Voter Authentication</h2>
-      <p>Place your finger on the scanner and enter your credentials to access the ballot.</p>
+      <p>Enter your credentials from your printed PIN card to access the ballot.</p>
       <input style={styles.input} placeholder="National ID" onChange={e => setVoterCreds({...voterCreds, id: e.target.value})} />
       <input style={styles.input} type="password" placeholder="6-Digit PIN" onChange={e => setVoterCreds({...voterCreds, pin: e.target.value})} />
       <button style={{ ...styles.btn, width: '100%' }} onClick={() => {
@@ -104,294 +94,339 @@ export default function App() {
     </div>
   );
 
-  const renderVerifyReceipt = () => (
-    <div style={{ ...styles.card, maxWidth: '500px', margin: '50px auto' }}>
-      <h2 style={{ color: COLORS.primary }}>Verify Public Receipt</h2>
-      <p>Enter your tracking code to verify your vote on the bulletin board.</p>
-      <input style={styles.input} placeholder="UON-XXXXXXXXXX" onChange={e => setVerifyCode(e.target.value)} />
-      <button style={{ ...styles.btn, width: '100%' }} onClick={() => {
-        fetch(`${API_BASE}/verify/${verifyCode}`)
-          .then(async r => {
-            const data = await r.json();
-            if (!r.ok) { setVerifyResult(null); alert(data.detail); }
-            else setVerifyResult(data);
-          });
-      }}>Verify Now</button>
-      
-      {verifyResult && (
-        <div style={{ marginTop: '20px', padding: '15px', background: '#e8f5e9', borderRadius: '8px' }}>
-          <h3 style={{ margin: '0 0 10px 0', color: COLORS.primary }}>✅ Vote Verified</h3>
-          <p><strong>Candidate:</strong> {verifyResult.candidate_name} ({verifyResult.party})</p>
-          <p><strong>Position:</strong> {verifyResult.position}</p>
-          <p><strong>Timestamp:</strong> {verifyResult.ts}</p>
-        </div>
-      )}
-      <button style={{ ...styles.btnOutline, width: '100%', marginTop: '20px' }} onClick={() => { setVerifyResult(null); setView('HOME'); }}>Back</button>
-    </div>
-  );
-
-  const renderVoting = () => {
-    const submitVote = async (candId) => {
-      if (!window.confirm("Are you sure? This action cannot be undone.")) return;
-      const { p, g, Y } = cryptoParams;
-      const m = modPow(g, candId, p), r = Math.floor(Math.random() * (p - 2)) + 1;
-      const alpha = modPow(g, r, p), beta = (m * modPow(Y, r, p)) % p;
-      const k = Math.floor(Math.random() * (p - 2)) + 1, t = modPow(g, k, p);
-      const c = Number((await generateHash(`${alpha}${beta}${t}`)) % window.BigInt(p - 1));
-      const s = (k + (c * r)) % (p - 1);
-
-      fetch(`${API_BASE}/vote`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            alpha: String(alpha), 
-            beta: String(beta), 
-            t: String(t), 
-            s: String(s), 
-            national_id: activeVoter,
-            candidate_id: candId
-        })
-      }).then(async res => {
-        const data = await res.json();
-        if (res.ok) { setReceipt(data.tracking_code); setView('RECEIPT'); }
-        else alert("Error: " + data.detail);
-      });
-    };
-
-    return (
-      <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2>Select Your Candidate</h2>
-            {message && <span style={{ color: COLORS.primary, fontWeight: 'bold' }}>{message}</span>}
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px' }}>
-          {candidates.map(c => (
-            <div key={c.id} style={{ ...styles.card, textAlign: 'center', borderTop: `4px solid ${COLORS.primary}` }}>
-              {c.photo_url && <img src={c.photo_url} alt={c.name} style={{ width: '100px', height: '100px', borderRadius: '50%', objectFit: 'cover' }} />}
-              <h3>{c.name}</h3><p><b>Party:</b> {c.party}</p><p><b>Position:</b> {c.position}</p>
-              <button style={styles.btn} onClick={() => submitVote(c.id)}>Confirm Vote</button>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
-  const renderReceipt = () => (
-    <div style={{ ...styles.card, textAlign: 'center', marginTop: '50px', backgroundColor: '#e8f5e9' }}>
-      <h1 style={{ color: COLORS.primary }}>Vote Cast Successfully!</h1>
-      <p>Your unique ballot tracking code is:</p>
-      <h2 style={{ letterSpacing: '2px', background: '#fff', padding: '10px', display: 'inline-block', borderRadius: '5px' }}>{receipt}</h2>
-      
-      <div style={{ marginTop: '30px', padding: '20px', background: '#333', color: '#0f0', fontFamily: 'monospace', borderRadius: '8px', textAlign: 'left' }}>
-        <h3>&gt; Secure Audit Trail</h3>
-        <p>&gt; Ballot securely sealed using ElGamal ZKP</p>
-        <p>&gt; Homomorphic aggregation enabled for universal verifiability</p>
-        <p>&gt; Session Token: {activeVoter ? 'VALID' : 'EXPIRED'}</p>
-      </div>
-      <button style={{ ...styles.btn, marginTop: '20px' }} onClick={() => { setActiveVoter(null); setMessage(""); setView('HOME'); }}>Return to Home</button>
-    </div>
-  );
-
   return (
     <div style={styles.container}>
-      {view !== 'HOME' && view !== 'RECEIPT' && view !== 'VERIFY_RECEIPT' && (
+      {view !== 'HOME' && view !== 'RECEIPT' && view !== 'VOTING' && (
         <div style={styles.header}>
           <h2 style={{ margin: 0, color: COLORS.primary }}>UoN E-Voting</h2>
-          <button style={styles.btnOutline} onClick={() => { setActiveVoter(null); setView('HOME'); }}>Log Out</button>
+          <button style={styles.btnOutline} onClick={() => { setActiveVoter(null); setView('HOME'); }}>Exit</button>
         </div>
       )}
       
       {view === 'HOME' && renderHome()}
       {view === 'ADMIN_LOGIN' && renderAdminLogin()}
       {view === 'VOTER_LOGIN' && renderVoterLogin()}
-      {view === 'VERIFY_RECEIPT' && renderVerifyReceipt()}
-      {view === 'VOTING' && renderVoting()}
-      {view === 'RECEIPT' && renderReceipt()}
-      
+      {view === 'VOTING' && <VotingBooth activeVoter={activeVoter} candidates={candidates} config={config} cryptoParams={cryptoParams} generateHash={generateHash} modPow={modPow} onComplete={(code) => { setReceipt(code); setView('RECEIPT'); }} onExit={() => setView('HOME')} />}
+      {view === 'RECEIPT' && (
+        <div style={{ ...styles.card, textAlign: 'center', marginTop: '50px', backgroundColor: '#e8f5e9' }}>
+          <h1 style={{ color: COLORS.primary }}>Vote Cast Successfully!</h1>
+          <p>Your unique ballot tracking code is:</p>
+          <h2 style={{ letterSpacing: '2px', background: '#fff', padding: '10px', display: 'inline-block', borderRadius: '5px' }}>{receipt}</h2>
+          <button style={{ ...styles.btn, marginTop: '20px' }} onClick={() => { setActiveVoter(null); setView('HOME'); }}>Done</button>
+        </div>
+      )}
       {view === 'ADMIN_DASHBOARD' && <AdminDashboard candidates={candidates} refreshCandidates={refreshCandidates} config={config} setConfig={setConfig} />}
     </div>
   );
 }
 
+// --- VOTING BOOTH (HTML Stepper Logic) ---
+function VotingBooth({ activeVoter, candidates, config, cryptoParams, generateHash, modPow, onComplete, onExit }) {
+  const [selections, setSelections] = useState({});
+  const [boothPos, setBoothPos] = useState(0);
+  const [phase, setPhase] = useState('voting');
+  
+  const votingPositions = config.positions.filter(p => candidates.some(c => c.position === p));
+
+  if (votingPositions.length === 0) return (
+    <div style={{ textAlign: 'center', marginTop: '50px' }}>
+      <h2>No Candidates Registered</h2>
+      <button style={styles.btn} onClick={onExit}>Return Home</button>
+    </div>
+  );
+
+  const currPos = votingPositions[boothPos];
+  const currCands = candidates.filter(c => c.position === currPos);
+  const isLast = boothPos === votingPositions.length - 1;
+
+  const next = () => { if (isLast) setPhase('review'); else setBoothPos(p => p + 1); };
+  const back = () => { if (phase === 'review') setPhase('voting'); else if (boothPos > 0) setBoothPos(p => p - 1); };
+  const skip = () => { setSelections(p => ({...p, [currPos]: 'SKIP'})); if (isLast) setPhase('review'); else setBoothPos(p => p + 1); };
+
+  const submitFinalBallot = async () => {
+    // Submit only the first valid selection for this prototype to match backend signature
+    const validSelectionPos = Object.keys(selections).find(k => selections[k] !== 'SKIP');
+    if(!validSelectionPos) { alert("You must select at least one candidate."); return; }
+    
+    const candId = selections[validSelectionPos];
+    const { p, g, Y } = cryptoParams;
+    const m = modPow(g, candId, p), r = Math.floor(Math.random() * (p - 2)) + 1;
+    const alpha = modPow(g, r, p), beta = (m * modPow(Y, r, p)) % p;
+    const k = Math.floor(Math.random() * (p - 2)) + 1, t = modPow(g, k, p);
+    const c = Number((await generateHash(`${alpha}${beta}${t}`)) % window.BigInt(p - 1));
+    const s = (k + (c * r)) % (p - 1);
+
+    fetch(`${API_BASE}/vote`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ alpha: String(alpha), beta: String(beta), t: String(t), s: String(s), national_id: activeVoter, candidate_id: candId })
+    }).then(async res => {
+      const data = await res.json();
+      if (res.ok) onComplete(data.tracking_code); else alert("Error: " + data.detail);
+    });
+  };
+
+  if (phase === 'review') {
+    return (
+      <div style={styles.card}>
+        <h2 style={{ color: COLORS.primary }}>Review Your Selections</h2>
+        <div style={{ background: '#fffbee', padding: '10px', borderRadius: '5px', marginBottom: '15px', color: '#92400e' }}>⚠ Please review carefully. Once submitted, your ballot cannot be changed.</div>
+        {votingPositions.map(pos => {
+          const sel = selections[pos];
+          const cand = sel && sel !== 'SKIP' ? candidates.find(c => c.id === sel) : null;
+          return (
+            <div key={pos} style={{ display: 'flex', alignItems: 'center', padding: '15px', border: '1px solid #ddd', borderRadius: '8px', marginBottom: '10px', background: cand ? '#f0fdf4' : '#fef2f2' }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '11px', textTransform: 'uppercase', color: '#666' }}>{pos}</div>
+                {cand ? <div><strong>{cand.name}</strong> ({cand.party})</div> : <div style={{ color: 'red' }}>Not Selected / Skipped</div>}
+              </div>
+            </div>
+          );
+        })}
+        <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+          <button style={{ ...styles.btnOutline, flex: 1 }} onClick={back}>← Edit</button>
+          <button style={{ ...styles.btn, flex: 2 }} onClick={submitFinalBallot}>✅ Cast My Ballot</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.card}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
+        <h2>{currPos}</h2>
+        <span style={{ color: '#666' }}>Position {boothPos + 1} of {votingPositions.length}</span>
+      </div>
+      
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', marginBottom: '20px' }}>
+        {currCands.map(c => (
+          <div key={c.id} onClick={() => setSelections({...selections, [currPos]: c.id})} style={{ border: `2px solid ${selections[currPos] === c.id ? COLORS.secondary : '#ddd'}`, borderRadius: '10px', padding: '15px', textAlign: 'center', cursor: 'pointer', background: selections[currPos] === c.id ? '#fffbee' : '#fff' }}>
+            {c.photo_url ? <img src={c.photo_url} alt={c.name} style={{ width: '80px', height: '80px', borderRadius: '50%', objectFit: 'cover', marginBottom: '10px' }} /> : <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: '#eee', margin: '0 auto 10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>👤</div>}
+            <div style={{ fontWeight: 'bold' }}>{c.name}</div>
+            <div style={{ fontSize: '12px', color: '#666' }}>{c.party}</div>
+          </div>
+        ))}
+      </div>
+      
+      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+        <div>
+          {boothPos > 0 && <button style={{...styles.btnOutline, marginRight: '10px'}} onClick={back}>← Back</button>}
+          <button style={{...styles.btnOutline, color: '#D97706', borderColor: '#fde68a'}} onClick={skip}>Skip →</button>
+        </div>
+        <button style={{...styles.btn, opacity: selections[currPos] ? 1 : 0.5}} disabled:={!selections[currPos]} onClick={next}>{isLast ? 'Review Selections →' : 'Next Position →'}</button>
+      </div>
+    </div>
+  );
+}
+
+// --- ADMIN DASHBOARD ---
 function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
   const [tab, setTab] = useState('OVERVIEW');
-  const [newCand, setNewCand] = useState({ name: '', party: '', position: '', photo_url: '' });
-  const [editingId, setEditingId] = useState(null);
+  const [newCand, setNewCand] = useState({ name: '', party: '', position: config.positions[0] || '', photo_url: '' });
+  const [candFilter, setCandFilter] = useState('All');
   const [newVoter, setNewVoter] = useState({ name: '', national_id: '' });
   const [voters, setVoters] = useState([]);
   const [results, setResults] = useState({ total_cast: 0, registered: 0, results: {} });
-  const [auditLogs, setAuditLogs] = useState([]);
+  const fileRef = useRef(null);
 
   const fetchVoters = () => fetch(`${API_BASE}/admin/voters`).then(r => r.json()).then(setVoters);
   const fetchResults = () => fetch(`${API_BASE}/admin/tally`).then(r => r.json()).then(setResults);
-  const fetchAudit = () => fetch(`${API_BASE}/admin/audit`).then(r => r.json()).then(setAuditLogs);
 
   useEffect(() => { 
     if (tab === 'VOTERS') fetchVoters(); 
-    if (tab === 'RESULTS' || tab === 'OVERVIEW') fetchResults(); 
-    if (tab === 'AUDIT') fetchAudit();
+    if (tab === 'RESULTS' || tab === 'OVERVIEW') { fetchResults(); fetchVoters(); }
   }, [tab]);
 
+  const handlePhotoUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setNewCand(p => ({...p, photo_url: ev.target.result}));
+    reader.readAsDataURL(file);
+  };
+
   const saveCandidate = () => {
-    const url = editingId ? `${API_BASE}/admin/candidates/${editingId}` : `${API_BASE}/admin/candidates`;
-    const method = editingId ? 'PUT' : 'POST';
-
-    fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newCand) })
-      .then(() => { 
-        alert(editingId ? 'Candidate Updated!' : 'Candidate Registered!'); 
-        refreshCandidates(); 
-        setNewCand({ name: '', party: '', position: '', photo_url: '' }); 
-        setEditingId(null);
-      });
-  };
-
-  const deleteCandidate = (id) => {
-    if (!window.confirm("Are you sure you want to delete this candidate?")) return;
-    fetch(`${API_BASE}/admin/candidates/${id}`, { method: 'DELETE' }).then(() => { alert("Candidate deleted."); refreshCandidates(); });
-  };
-
-  const startEdit = (c) => {
-    setNewCand({ name: c.name, party: c.party, position: c.position, photo_url: c.photo_url || '' });
-    setEditingId(c.id);
+    fetch(`${API_BASE}/admin/candidates`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newCand) })
+      .then(() => { alert('Candidate Registered!'); refreshCandidates(); setNewCand({ name: '', party: '', position: config.positions[0] || '', photo_url: '' }); });
   };
 
   const regVoter = () => {
     fetch(`${API_BASE}/admin/voters`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newVoter) })
-      .then(async r => {
-        const data = await r.json();
-        if (r.ok) { alert(`Voter Registered! Secure 6-digit PIN: ${data.pin}\nRecord this PIN now.`); fetchVoters(); }
-        else alert(data.detail);
-      });
+      .then(async r => { const data = await r.json(); if (r.ok) { alert(`Secure 6-digit PIN: ${data.pin}`); fetchVoters(); } else alert(data.detail); });
   };
 
-  const handleBulkUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const rows = event.target.result.split('\n').filter(row => row.trim() !== '');
-      const parsedVoters = rows.map(row => {
-        const [name, national_id] = row.split(',');
-        return { name: name?.trim(), national_id: national_id?.trim() };
-      }).filter(v => v.name && v.national_id);
-
-      if (parsedVoters.length === 0) { alert("No valid data found. Ensure CSV format is: Name,National_ID"); return; }
-
-      fetch(`${API_BASE}/admin/voters/bulk`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ voters: parsedVoters })
-      }).then(async r => {
-        const data = await r.json();
-        let csvContent = "data:text/csv;charset=utf-8,Name,National ID,Status,Secure PIN\n";
-        data.results.forEach(res => { csvContent += `${res.name},${res.national_id},${res.status},${res.pin}\n`; });
-        const encodedUri = encodeURI(csvContent);
-        const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", "UoN_Voter_Registry_PINs.csv");
-        document.body.appendChild(link);
-        link.click();
-        alert(`Bulk registration complete! A spreadsheet containing the secure PINs is downloading now.`);
-        fetchVoters();
-      });
+  const printVoterCards = () => {
+    const getBase64Image = (imgUrl) => {
+        return new Promise(resolve => {
+            let img = new Image();
+            img.crossOrigin = 'Anonymous';
+            img.onload = () => {
+                let canvas = document.createElement('canvas');
+                canvas.width = img.width; canvas.height = img.height;
+                let ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+                resolve(canvas.toDataURL('image/jpeg'));
+            };
+            img.src = imgUrl;
+        });
     };
-    reader.readAsText(file);
+
+    getBase64Image(uonLogo).then(base64Logo => {
+        const activeVoters = voters.filter(v => !v.revoked);
+        
+        // Generate the individual cards dynamically
+        const cards = activeVoters.map(v => `
+          <div class="card">
+            <div style="text-align: center; margin-bottom: 8px;">
+              <img src="${base64Logo}" alt="UON Logo" style="width: 50px; height: auto; border-radius: 4px;" />
+            </div>
+            <div class="hdr">&#127513; UON OFFICIAL CREDENTIAL</div>
+            <div class="name">${v.name}</div>
+            <div class="nid">National ID: ${v.national_id}</div>
+            <div class="plabel">Voter PIN</div>
+            <div class="pin">${v.pin}</div>
+            <div class="warn">CONFIDENTIAL &mdash; DO NOT SHARE</div>
+          </div>
+        `).join('');
+
+        // Wrap the cards in your exact HTML/CSS template
+        const htmlTemplate = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <title>Voter PIN Cards</title>
+            <style>
+              * { box-sizing: border-box; margin: 0; padding: 0 }
+              body { font-family: Arial, sans-serif; background: #eee; padding: 10px }
+              .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px }
+              .card { background: #fff; border: 2px solid #1B3A6B; border-radius: 8px; padding: 12px; break-inside: avoid; page-break-inside: avoid }
+              .hdr { background: #1B3A6B; color: #fff; text-align: center; padding: 4px 6px; border-radius: 4px; font-size: 9px; font-weight: 700; letter-spacing: .5px; margin-bottom: 9px }
+              .name { font-size: 12px; font-weight: 700; color: #1B3A6B; margin-bottom: 2px }
+              .nid { font-size: 10px; color: #666; margin-bottom: 7px }
+              .plabel { font-size: 8px; color: #999; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 2px }
+              .pin { font-size: 18px; font-weight: 700; color: #C9A227; font-family: monospace; letter-spacing: 5px; background: #fffbee; border: 1px dashed #fde68a; border-radius: 4px; padding: 5px; text-align: center; margin-bottom: 5px }
+              .warn { font-size: 8px; color: #DC2626; text-align: center; border-top: 1px solid #eee; padding-top: 4px; margin-top: 2px; font-weight: 600 }
+              @media print { body { background: #fff; padding: 0 } .grid { gap: 4px } }
+            </style>
+          </head>
+          <body>
+            <div class="grid">${cards}</div>
+            <script>window.onload = () => { window.print(); }</script>
+          </body>
+          </html>
+        `;
+
+        const newWin = window.open('', '', 'width=800,height=600');
+        newWin.document.write(htmlTemplate);
+        newWin.document.close();
+    });
   };
 
-  const exportResultsCSV = () => {
-    let csvContent = "data:text/csv;charset=utf-8,Candidate,Party,Position,Votes,Percentage\n";
-    candidates.forEach(c => {
-      const votes = results.results[c.id] || 0;
-      const pct = results.total_cast ? ((votes / results.total_cast) * 100).toFixed(1) : 0;
-      csvContent += `${c.name},${c.party},${c.position},${votes},${pct}%\n`;
+    getBase64Image(uonLogo).then(base64Logo => {
+        const activeVoters = voters.filter(v => !v.revoked);
+        const cards = activeVoters.map(v => `
+            <div style="border: 2px solid #004d28; border-radius: 8px; padding: 15px; margin: 10px; width: 30%; display: inline-block; text-align: center; font-family: sans-serif; page-break-inside: avoid;">
+            <img src="${base64Logo}" style="width: 50px; margin-bottom: 10px;" />
+            <div style="background: #004d28; color: white; padding: 5px; font-size: 10px; font-weight: bold;">UON OFFICIAL CREDENTIAL</div>
+            <h3 style="margin: 10px 0 5px;">${v.name}</h3>
+            <p style="margin: 0; font-size: 12px; color: #666;">ID: ${v.national_id}</p>
+            <div style="background: #fffbee; border: 1px dashed #d4af37; padding: 10px; margin-top: 10px; font-size: 18px; font-weight: bold; letter-spacing: 3px;">******</div>
+            <p style="font-size: 9px; color: red; margin-top: 5px;">PIN issued at registration desk</p>
+            </div>
+        `).join('');
+
+        const newWin = window.open('', '', 'width=800,height=600');
+        newWin.document.write(`<html><head><title>Print Voter Cards</title></head><body onload="window.print()">${cards}</body></html>`);
+        newWin.document.close();
     });
-    const link = document.createElement("a");
-    link.setAttribute("href", encodeURI(csvContent));
-    link.setAttribute("download", "UoN_Election_Results.csv");
-    document.body.appendChild(link);
-    link.click();
   };
+
+  const activeVotersCount = voters.filter(v => !v.revoked).length;
+  const turnoutPct = activeVotersCount > 0 ? ((results.total_cast / activeVotersCount) * 100).toFixed(1) : 0;
 
   return (
     <div>
       <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', flexWrap: 'wrap' }}>
-        {['OVERVIEW', 'CANDIDATES', 'VOTERS', 'RESULTS', 'AUDIT', 'SETTINGS'].map(t => (
+        {['OVERVIEW', 'CANDIDATES', 'VOTERS', 'RESULTS', 'SETTINGS'].map(t => (
           <button key={t} style={tab === t ? styles.btn : styles.btnOutline} onClick={() => setTab(t)}>{t}</button>
         ))}
       </div>
 
       {tab === 'OVERVIEW' && (
-        <div style={styles.card}>
-          <h2>Election Overview</h2>
-          <div style={{ display: 'flex', gap: '20px', justifyContent: 'space-between', flexWrap: 'wrap' }}>
-            <div style={{ padding: '20px', background: COLORS.primary, color: 'white', borderRadius: '8px', flex: 1, minWidth: '200px' }}><h3>Registered</h3><p style={{fontSize:'2em', margin:0}}>{results.registered}</p></div>
-            <div style={{ padding: '20px', background: COLORS.secondary, color: 'white', borderRadius: '8px', flex: 1, minWidth: '200px' }}><h3>Votes Cast</h3><p style={{fontSize:'2em', margin:0}}>{results.total_cast}</p></div>
+        <div>
+          <div style={{ display: 'flex', gap: '15px', marginBottom: '20px' }}>
+            <div style={{ ...styles.card, flex: 1 }}><h3>Registered</h3><h1 style={{color: COLORS.primary}}>{activeVotersCount}</h1></div>
+            <div style={{ ...styles.card, flex: 1 }}><h3>Votes Cast</h3><h1 style={{color: COLORS.secondary}}>{results.total_cast}</h1></div>
+            <div style={{ ...styles.card, flex: 1 }}><h3>Turnout</h3><h1 style={{color: '#2563EB'}}>{turnoutPct}%</h1></div>
+          </div>
+          <div style={styles.card}>
+            <h3>Turnout Progress</h3>
+            <div style={{ background: '#e8edf5', borderRadius: '20px', height: '18px', overflow: 'hidden', marginTop: '10px' }}>
+              <div style={{ background: COLORS.primary, height: '100%', width: `${turnoutPct}%`, transition: 'width 0.5s' }}></div>
+            </div>
           </div>
         </div>
       )}
 
       {tab === 'CANDIDATES' && (
-        <div style={styles.card}>
-          <h2>{editingId ? "Edit Candidate" : "Register New Candidate"}</h2>
-          <input style={styles.input} placeholder="Candidate Name" value={newCand.name} onChange={e => setNewCand({...newCand, name: e.target.value})} />
-          <input style={styles.input} placeholder="Party Name" value={newCand.party} onChange={e => setNewCand({...newCand, party: e.target.value})} />
-          <input style={styles.input} placeholder="Position" value={newCand.position} onChange={e => setNewCand({...newCand, position: e.target.value})} />
-          <input style={styles.input} placeholder="Photo URL (Direct Link ending in .jpg/.png)" value={newCand.photo_url} onChange={e => setNewCand({...newCand, photo_url: e.target.value})} />
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '20px' }}>
+          <div style={styles.card}>
+            <h3>Register Candidate</h3>
+            <div style={{ textAlign: 'center', marginBottom: '15px' }}>
+              <div onClick={() => fileRef.current && fileRef.current.click()} style={{ width: '100px', height: '100px', borderRadius: '50%', margin: '0 auto', background: '#f4f7f6', border: '2px dashed #ccc', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden' }}>
+                {newCand.photo_url ? <img src={newCand.photo_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="Upload" /> : "📷"}
+              </div>
+              <input type="file" ref={fileRef} accept="image/*" style={{ display: 'none' }} onChange={handlePhotoUpload} />
+            </div>
+            <input style={styles.input} placeholder="Full Name" value={newCand.name} onChange={e => setNewCand({...newCand, name: e.target.value})} />
+            <input style={styles.input} placeholder="Party Name" value={newCand.party} onChange={e => setNewCand({...newCand, party: e.target.value})} />
+            <select style={styles.input} value={newCand.position} onChange={e => setNewCand({...newCand, position: e.target.value})}>
+                <option value="">Select Position...</option>
+                {config.positions.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <button style={{...styles.btn, width: '100%'}} onClick={saveCandidate}>Add Candidate</button>
+          </div>
           
-          <button style={styles.btn} onClick={saveCandidate}>{editingId ? "Update Candidate" : "Add to Registry"}</button>
-          {editingId && <button style={{...styles.btnOutline, marginLeft: '10px'}} onClick={() => { setEditingId(null); setNewCand({ name: '', party: '', position: '', photo_url: '' }); }}>Cancel</button>}
-
-          <h3 style={{marginTop: '30px'}}>Current Candidates</h3>
-          <ul style={{ listStyle: 'none', padding: 0 }}>
-            {candidates.map(c => (
-              <li key={c.id} style={{ padding: '10px', borderBottom: '1px solid #ccc', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span><b>{c.name}</b> ({c.party}) - {c.position}</span>
-                <div>
-                  <button style={{...styles.btnOutline, padding: '5px 10px', marginRight: '10px'}} onClick={() => startEdit(c)}>Edit</button>
-                  <button style={{...styles.btnOutline, padding: '5px 10px', color: 'red', borderColor: 'red'}} onClick={() => deleteCandidate(c.id)}>Delete</button>
-                </div>
-              </li>
-            ))}
-          </ul>
+          <div style={styles.card}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <h3>Candidates List</h3>
+                <select style={{ padding: '5px' }} value={candFilter} onChange={e => setCandFilter(e.target.value)}>
+                    <option value="All">All Positions</option>
+                    {config.positions.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+            </div>
+            <ul style={{ listStyle: 'none', padding: 0, marginTop: '15px' }}>
+              {candidates.filter(c => candFilter === 'All' || c.position === candFilter).map(c => (
+                <li key={c.id} style={{ display: 'flex', alignItems: 'center', padding: '10px', borderBottom: '1px solid #eee' }}>
+                  {c.photo_url ? <img src={c.photo_url} style={{ width: '40px', height: '40px', borderRadius: '50%', marginRight: '15px', objectFit: 'cover' }} alt=""/> : <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: '#ccc', marginRight: '15px' }}></div>}
+                  <div style={{ flex: 1 }}>
+                    <strong>{c.name}</strong>
+                    <div style={{ fontSize: '12px', color: '#666' }}>{c.party} &bull; <span style={{...styles.badge, background: '#dbeafe', color: '#1e40af'}}>{c.position}</span></div>
+                  </div>
+                  <button style={{...styles.btnOutline, color: 'red', borderColor: 'red'}} onClick={() => fetch(`${API_BASE}/admin/candidates/${c.id}`, { method: 'DELETE' }).then(refreshCandidates)}>Remove</button>
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       )}
 
       {tab === 'VOTERS' && (
         <div style={styles.card}>
-          <h2>Voter Registry Management</h2>
-          <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h2>Voter Registry</h2>
+            <button style={{ ...styles.btnOutline, color: COLORS.secondary, borderColor: COLORS.secondary }} onClick={printVoterCards}>🖨 Print PIN Cards</button>
+          </div>
+          <div style={{ display: 'flex', gap: '10px', margin: '20px 0' }}>
             <input style={{...styles.input, flex: 1}} placeholder="Full Name" onChange={e => setNewVoter({...newVoter, name: e.target.value})} />
             <input style={{...styles.input, flex: 1}} placeholder="National ID" onChange={e => setNewVoter({...newVoter, national_id: e.target.value})} />
-            <button style={{ ...styles.btn, width: '200px', height: '42px' }} onClick={regVoter}>Register (Single)</button>
+            <button style={{ ...styles.btn, height: '42px' }} onClick={regVoter}>Register</button>
           </div>
-          
-          <hr style={{ margin: '20px 0', border: '1px solid #eee' }} />
-          
-          <h3>Bulk Registration (CSV Upload)</h3>
-          <p style={{ fontSize: '0.9em', color: '#666' }}>Upload a .csv file formatted with two columns: <b>Name, National_ID</b>.</p>
-          <input type="file" accept=".csv" onChange={handleBulkUpload} style={{ padding: '10px', border: '2px dashed #ccc', width: '100%', boxSizing: 'border-box' }} />
-
-          <h3 style={{marginTop: '30px'}}>Registry List</h3>
           <ul style={{ listStyle: 'none', padding: 0 }}>
             {voters.map(v => (
-              <li key={v.national_id} style={{ padding: '10px', borderBottom: '1px solid #ccc', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: v.revoked ? '#ffebee' : 'transparent' }}>
+              <li key={v.national_id} style={{ padding: '10px', borderBottom: '1px solid #ccc', display: 'flex', justifyContent: 'space-between', background: v.revoked ? '#ffebee' : 'transparent' }}>
                 <span>{v.name} (ID: {v.national_id})</span>
-                <div>
-                  {v.revoked ? (
-                    <span style={{ color: 'darkred', fontWeight: 'bold', marginRight: '15px' }}>REVOKED</span>
-                  ) : (
-                    <span style={{ color: v.has_voted ? 'green' : 'gray', fontWeight: 'bold', marginRight: '15px' }}>{v.has_voted ? 'VOTED' : 'ELIGIBLE'}</span>
-                  )}
-                  <button style={{...styles.btnOutline, padding: '5px 10px', fontSize: '0.8em', marginRight: '5px'}} onClick={() => {
-                    fetch(`${API_BASE}/admin/voters/${v.national_id}/revoke`, { method: 'PUT' }).then(() => fetchVoters());
-                  }}>{v.revoked ? "Reinstate" : "Revoke"}</button>
-                  <button style={{...styles.btnOutline, padding: '5px 10px', fontSize: '0.8em'}} onClick={() => {
-                    if(!window.confirm(`Generate a new PIN for ${v.name}?`)) return;
-                    fetch(`${API_BASE}/admin/voters/${v.national_id}/reset-pin`, { method: 'POST' }).then(async r => {
-                        const data = await r.json();
-                        if(r.ok) alert(`New PIN for ${v.name} is: ${data.new_pin}\nRecord this immediately!`); else alert(data.detail);
-                    });
-                  }}>Reset PIN</button>
-                </div>
+                <span style={{ color: v.has_voted ? 'green' : 'gray', fontWeight: 'bold' }}>{v.has_voted ? 'VOTED' : 'ELIGIBLE'}</span>
               </li>
             ))}
           </ul>
@@ -400,58 +435,72 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
 
       {tab === 'RESULTS' && (
         <div style={styles.card}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2>Live Tally Results 🏆</h2>
-            <button style={styles.btnOutline} onClick={exportResultsCSV}>📥 Export CSV</button>
-          </div>
-          <p>Results are recovered from the homomorphic sum using threshold decryption.</p>
-          {candidates.map(c => {
-            const votes = results.results[c.id] || 0;
-            const pct = results.total_cast ? (votes / results.total_cast) * 100 : 0;
+          <h2>Live Tally Results 🏆</h2>
+          {config.positions.map(pos => {
+            const posCands = candidates.filter(c => c.position === pos).sort((a,b) => (results.results[b.id]||0) - (results.results[a.id]||0));
+            if(posCands.length === 0) return null;
+            const maxV = Math.max(...posCands.map(c => results.results[c.id] || 0), 1);
+            
             return (
-              <div key={c.id} style={{ marginBottom: '20px' }}>
-                <p><b>{c.name}</b> ({c.position}): {votes} votes ({pct.toFixed(1)}%)</p>
-                <div style={{ background: '#eee', width: '100%', height: '25px', borderRadius: '5px' }}>
-                  <div style={{ background: COLORS.primary, width: `${pct}%`, height: '100%', borderRadius: '5px', transition: 'width 0.5s' }}></div>
-                </div>
+              <div key={pos} style={{ marginBottom: '30px' }}>
+                <h3 style={{ borderBottom: '2px solid #eee', paddingBottom: '5px' }}>{pos}</h3>
+                {posCands.map((c, i) => {
+                  const v = results.results[c.id] || 0;
+                  const pct = results.total_cast > 0 ? Math.round((v / results.total_cast) * 100) : 0;
+                  const isWin = i === 0 && v > 0;
+                  return (
+                    <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '15px', marginBottom: '15px' }}>
+                      <div style={{ fontSize: '20px', width: '30px', textAlign: 'center' }}>{isWin ? '🥇' : i+1}</div>
+                      {c.photo_url ? <img src={c.photo_url} style={{ width: '45px', height: '45px', borderRadius: '50%', objectFit: 'cover' }} alt=""/> : <div style={{ width: '45px', height: '45px', borderRadius: '50%', background: '#ccc' }}></div>}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <strong>{c.name} <span style={{ color: '#666', fontWeight: 'normal', fontSize: '12px' }}>({c.party})</span></strong>
+                          <strong>{v} <span style={{ color: '#666', fontWeight: 'normal', fontSize: '12px' }}>({pct}%)</span></strong>
+                        </div>
+                        <div style={{ background: '#e8edf5', height: '8px', borderRadius: '10px', marginTop: '5px' }}>
+                          <div style={{ background: isWin ? COLORS.secondary : COLORS.primary, height: '100%', borderRadius: '10px', width: `${(v/maxV)*100}%` }}></div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            )
+            );
           })}
-        </div>
-      )}
-
-      {tab === 'AUDIT' && (
-        <div style={styles.card}>
-          <h2>System Audit Log</h2>
-          <p>Irrefutable records of all administrative and system actions.</p>
-          <ul style={{ listStyle: 'none', padding: 0, maxHeight: '400px', overflowY: 'auto' }}>
-            {auditLogs.map(log => (
-              <li key={log.id} style={{ padding: '10px', borderBottom: '1px solid #eee', fontSize: '0.9em' }}>
-                <span style={{ color: '#888', marginRight: '10px' }}>{new Date(log.ts).toLocaleString()}</span>
-                <span style={{ fontWeight: 'bold', color: COLORS.primary, marginRight: '10px' }}>[{log.action}]</span>
-                <span>{log.details}</span>
-              </li>
-            ))}
-          </ul>
         </div>
       )}
 
       {tab === 'SETTINGS' && (
         <div style={styles.card}>
           <h2>Election Settings</h2>
-          <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Election Name</label>
+          <label style={{ display: 'block', fontWeight: 'bold' }}>Election Name</label>
           <input style={styles.input} value={config.name} onChange={e => setConfig({...config, name: e.target.value})} />
-          
-          <label style={{ display: 'block', marginTop: '15px', marginBottom: '5px', fontWeight: 'bold' }}>Voting Status</label>
+          <label style={{ display: 'block', fontWeight: 'bold', marginTop: '10px' }}>Voting Status</label>
           <select style={styles.input} value={config.status} onChange={e => setConfig({...config, status: e.target.value})}>
-            <option value="open">Open (Voting Allowed)</option>
-            <option value="closed">Closed (Voting Disabled)</option>
+            <option value="open">🟢 Open (Voting Allowed)</option>
+            <option value="closed">🔴 Closed (Voting Disabled)</option>
           </select>
-
-          <button style={{...styles.btn, marginTop: '20px'}} onClick={() => {
-            fetch(`${API_BASE}/admin/settings`, {
-              method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config)
-            }).then(() => alert('Settings Saved Successfully!'));
+          <label style={{ display: 'block', fontWeight: 'bold', marginTop: '10px', marginBottom: '5px' }}>Ballot Positions</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
+            {config.positions.map(p => (
+                <div key={p} style={{ background: '#f0f4fa', padding: '5px 12px', borderRadius: '20px', fontSize: '13px', display: 'flex', alignItems: 'center' }}>
+                    {p} <button onClick={() => setConfig({...config, positions: config.positions.filter(x => x !== p)})} style={{ background: 'none', border: 'none', marginLeft: '5px', cursor: 'pointer', color: 'red' }}>×</button>
+                </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <input style={{...styles.input, marginBottom: 0}} id="newPosInput" placeholder="Add new position..." />
+            <button style={styles.btn} onClick={() => {
+                const val = document.getElementById('newPosInput').value.trim();
+                if(val && !config.positions.includes(val)) {
+                    setConfig({...config, positions: [...config.positions, val]});
+                    document.getElementById('newPosInput').value = '';
+                }
+            }}>Add</button>
+          </div>
+          <button style={{...styles.btn, width: '100%', marginTop: '20px'}} onClick={() => {
+            fetch(`${API_BASE}/admin/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) })
+            .then(() => alert('Settings Saved!'));
           }}>Save Settings</button>
         </div>
       )}

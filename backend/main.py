@@ -7,6 +7,7 @@ import sqlite3
 import random
 import string
 import hashlib
+import json
 from datetime import datetime
 
 app = FastAPI()
@@ -34,19 +35,14 @@ def init_db():
     conn.execute('''CREATE TABLE IF NOT EXISTS votes 
                     (tracking_code TEXT PRIMARY KEY, national_id TEXT, candidate_id INTEGER, ts DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS settings 
-                    (id INTEGER PRIMARY KEY, name TEXT, status TEXT)''')
+                    (id INTEGER PRIMARY KEY, name TEXT, status TEXT, positions TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS audit_log 
                     (id INTEGER PRIMARY KEY AUTOINCREMENT, ts DATETIME DEFAULT CURRENT_TIMESTAMP, action TEXT, details TEXT, actor TEXT)''')
     
-    # Handle schema updates if the table already existed without the revoked column
-    try:
-        conn.execute("ALTER TABLE voters ADD COLUMN revoked BOOLEAN DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-
     # Initialize default settings if empty
     if not conn.execute("SELECT * FROM settings").fetchone():
-        conn.execute("INSERT INTO settings (id, name, status) VALUES (1, 'UoN General Election', 'open')")
+        default_positions = json.dumps(["Presidential", "Gubernatorial", "Senate", "National Assembly", "Women Representative"])
+        conn.execute("INSERT INTO settings (id, name, status, positions) VALUES (1, 'UoN General Election', 'open', ?)", (default_positions,))
     
     conn.commit()
     conn.close()
@@ -85,6 +81,7 @@ class Vote(BaseModel):
 class SettingsUpdate(BaseModel):
     name: str
     status: str
+    positions: List[str]
 
 # --- ENDPOINTS ---
 @app.get("/public-key")
@@ -96,13 +93,16 @@ def get_settings():
     conn = get_db()
     settings = conn.execute("SELECT * FROM settings WHERE id=1").fetchone()
     conn.close()
-    return dict(settings)
+    s_dict = dict(settings)
+    s_dict["positions"] = json.loads(s_dict["positions"]) if s_dict["positions"] else []
+    return s_dict
 
 @app.put("/admin/settings")
 def update_settings(s: SettingsUpdate):
     conn = get_db()
-    conn.execute("UPDATE settings SET name=?, status=? WHERE id=1", (s.name, s.status))
-    log_audit(conn, "CONFIG_UPDATED", f"Election status changed to {s.status}", "Admin")
+    conn.execute("UPDATE settings SET name=?, status=?, positions=? WHERE id=1", 
+                 (s.name, s.status, json.dumps(s.positions)))
+    log_audit(conn, "CONFIG_UPDATED", f"Election settings updated", "Admin")
     conn.commit()
     conn.close()
     return {"status": "success"}
