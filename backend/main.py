@@ -2,15 +2,15 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 import sqlite3
 import random
 import string
 import hashlib
+from datetime import datetime
 
 app = FastAPI()
 
-# Allow the Vercel frontend to communicate with this Render backend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -30,13 +30,31 @@ def init_db():
     conn.execute('''CREATE TABLE IF NOT EXISTS candidates 
                     (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, party TEXT, position TEXT, photo_url TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS voters 
-                    (national_id TEXT PRIMARY KEY, name TEXT, pin TEXT, has_voted BOOLEAN)''')
+                    (national_id TEXT PRIMARY KEY, name TEXT, pin TEXT, has_voted BOOLEAN, revoked BOOLEAN DEFAULT 0)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS votes 
-                    (tracking_code TEXT PRIMARY KEY, national_id TEXT, candidate_id INTEGER)''')
+                    (tracking_code TEXT PRIMARY KEY, national_id TEXT, candidate_id INTEGER, ts DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS settings 
+                    (id INTEGER PRIMARY KEY, name TEXT, status TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS audit_log 
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT, ts DATETIME DEFAULT CURRENT_TIMESTAMP, action TEXT, details TEXT, actor TEXT)''')
+    
+    # Handle schema updates if the table already existed without the revoked column
+    try:
+        conn.execute("ALTER TABLE voters ADD COLUMN revoked BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    # Initialize default settings if empty
+    if not conn.execute("SELECT * FROM settings").fetchone():
+        conn.execute("INSERT INTO settings (id, name, status) VALUES (1, 'UoN General Election', 'open')")
+    
     conn.commit()
     conn.close()
 
 init_db()
+
+def log_audit(conn, action: str, details: str, actor: str = "System"):
+    conn.execute("INSERT INTO audit_log (action, details, actor) VALUES (?, ?, ?)", (action, details, actor))
 
 # --- PYDANTIC MODELS ---
 class Candidate(BaseModel):
@@ -64,11 +82,37 @@ class Vote(BaseModel):
     t: str
     s: str
 
+class SettingsUpdate(BaseModel):
+    name: str
+    status: str
+
 # --- ENDPOINTS ---
 @app.get("/public-key")
 def get_public_key():
-    # ElGamal Cryptographic Parameters for the Voting Terminal
     return {"p": 1009, "g": 11, "Y": 432}
+
+@app.get("/settings")
+def get_settings():
+    conn = get_db()
+    settings = conn.execute("SELECT * FROM settings WHERE id=1").fetchone()
+    conn.close()
+    return dict(settings)
+
+@app.put("/admin/settings")
+def update_settings(s: SettingsUpdate):
+    conn = get_db()
+    conn.execute("UPDATE settings SET name=?, status=? WHERE id=1", (s.name, s.status))
+    log_audit(conn, "CONFIG_UPDATED", f"Election status changed to {s.status}", "Admin")
+    conn.commit()
+    conn.close()
+    return {"status": "success"}
+
+@app.get("/admin/audit")
+def get_audit_log():
+    conn = get_db()
+    logs = conn.execute("SELECT * FROM audit_log ORDER BY ts DESC LIMIT 100").fetchall()
+    conn.close()
+    return [dict(l) for l in logs]
 
 # --- CANDIDATE MANAGEMENT ---
 @app.get("/candidates")
@@ -83,6 +127,7 @@ def add_candidate(cand: Candidate):
     conn = get_db()
     conn.execute("INSERT INTO candidates (name, party, position, photo_url) VALUES (?, ?, ?, ?)", 
                  (cand.name, cand.party, cand.position, cand.photo_url))
+    log_audit(conn, "CANDIDATE_REGISTERED", f"{cand.name} added for {cand.position}", "Admin")
     conn.commit()
     conn.close()
     return {"status": "success"}
@@ -92,6 +137,7 @@ def update_candidate(cand_id: int, cand: Candidate):
     conn = get_db()
     conn.execute("UPDATE candidates SET name=?, party=?, position=?, photo_url=? WHERE id=?", 
                  (cand.name, cand.party, cand.position, cand.photo_url, cand_id))
+    log_audit(conn, "CANDIDATE_UPDATED", f"Updated details for candidate ID {cand_id}", "Admin")
     conn.commit()
     conn.close()
     return {"status": "updated"}
@@ -100,6 +146,7 @@ def update_candidate(cand_id: int, cand: Candidate):
 def delete_candidate(cand_id: int):
     conn = get_db()
     conn.execute("DELETE FROM candidates WHERE id=?", (cand_id,))
+    log_audit(conn, "CANDIDATE_REMOVED", f"Removed candidate ID {cand_id}", "Admin")
     conn.commit()
     conn.close()
     return {"status": "deleted"}
@@ -116,8 +163,9 @@ def register_voter(voter: Voter):
     pin = ''.join(random.choices(string.digits, k=6))
     hashed_pin = hashlib.sha256(pin.encode()).hexdigest()
     
-    conn.execute("INSERT INTO voters (national_id, name, pin, has_voted) VALUES (?, ?, ?, ?)", 
-                 (voter.national_id, voter.name, hashed_pin, False))
+    conn.execute("INSERT INTO voters (national_id, name, pin, has_voted, revoked) VALUES (?, ?, ?, ?, ?)", 
+                 (voter.national_id, voter.name, hashed_pin, False, False))
+    log_audit(conn, "VOTER_REGISTERED", f"Registered {voter.name} ({voter.national_id})", "Admin")
     conn.commit()
     conn.close()
     return {"status": "success", "pin": pin}
@@ -126,6 +174,7 @@ def register_voter(voter: Voter):
 def register_voters_bulk(req: BulkReq):
     conn = get_db()
     results = []
+    registered_count = 0
     
     for v in req.voters:
         existing = conn.execute("SELECT * FROM voters WHERE national_id=?", (v.national_id,)).fetchone()
@@ -136,11 +185,13 @@ def register_voters_bulk(req: BulkReq):
         pin = ''.join(random.choices(string.digits, k=6))
         hashed_pin = hashlib.sha256(pin.encode()).hexdigest()
         
-        conn.execute("INSERT INTO voters (national_id, name, pin, has_voted) VALUES (?, ?, ?, ?)", 
-                     (v.national_id, v.name, hashed_pin, False))
+        conn.execute("INSERT INTO voters (national_id, name, pin, has_voted, revoked) VALUES (?, ?, ?, ?, ?)", 
+                     (v.national_id, v.name, hashed_pin, False, False))
         
         results.append({"national_id": v.national_id, "name": v.name, "status": "Registered", "pin": pin})
+        registered_count += 1
         
+    log_audit(conn, "BULK_IMPORT", f"Imported {registered_count} voters via CSV", "Admin")
     conn.commit()
     conn.close()
     return {"processed": len(req.voters), "results": results}
@@ -157,14 +208,31 @@ def reset_pin(national_id: str):
     hashed_pin = hashlib.sha256(new_pin.encode()).hexdigest()
     
     conn.execute("UPDATE voters SET pin=? WHERE national_id=?", (hashed_pin, national_id))
+    log_audit(conn, "VOTER_RESET", f"Reset PIN for voter ID {national_id}", "Admin")
     conn.commit()
     conn.close()
     return {"status": "success", "new_pin": new_pin}
+
+@app.put("/admin/voters/{national_id}/revoke")
+def toggle_revoke_voter(national_id: str):
+    conn = get_db()
+    voter = conn.execute("SELECT * FROM voters WHERE national_id=?", (national_id,)).fetchone()
+    if not voter:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Voter not found")
+    
+    new_status = not voter["revoked"]
+    conn.execute("UPDATE voters SET revoked=? WHERE national_id=?", (new_status, national_id))
+    action = "VOTER_REVOKED" if new_status else "VOTER_REINSTATED"
+    log_audit(conn, action, f"Changed revocation status for voter ID {national_id} to {new_status}", "Admin")
+    conn.commit()
+    conn.close()
+    return {"status": "success", "revoked": new_status}
     
 @app.get("/admin/voters")
 def get_voters():
     conn = get_db()
-    voters = conn.execute("SELECT national_id, name, has_voted FROM voters").fetchall()
+    voters = conn.execute("SELECT national_id, name, has_voted, revoked FROM voters").fetchall()
     conn.close()
     return [dict(v) for v in voters]
 
@@ -172,11 +240,18 @@ def get_voters():
 @app.post("/voter/login")
 def login_voter(auth: VoterAuth):
     conn = get_db()
+    settings = conn.execute("SELECT status FROM settings WHERE id=1").fetchone()
+    if settings and settings["status"] == "closed":
+        conn.close()
+        raise HTTPException(status_code=403, detail="Voting is currently closed.")
+
     voter = conn.execute("SELECT * FROM voters WHERE national_id=?", (auth.national_id,)).fetchone()
     conn.close()
     
     if not voter:
         raise HTTPException(status_code=404, detail="Voter not found")
+    if voter["revoked"]:
+        raise HTTPException(status_code=403, detail="Voter credential has been revoked")
     if voter["has_voted"]:
         raise HTTPException(status_code=403, detail="Voter has already cast a ballot")
         
@@ -190,20 +265,41 @@ def login_voter(auth: VoterAuth):
 @app.post("/vote")
 def cast_vote(vote: Vote):
     conn = get_db()
-    voter = conn.execute("SELECT * FROM voters WHERE national_id=?", (vote.national_id,)).fetchone()
-    if not voter or voter["has_voted"]:
+    settings = conn.execute("SELECT status FROM settings WHERE id=1").fetchone()
+    if settings and settings["status"] == "closed":
         conn.close()
-        raise HTTPException(status_code=403, detail="Unauthorized or already voted")
+        raise HTTPException(status_code=403, detail="Voting is currently closed.")
+
+    voter = conn.execute("SELECT * FROM voters WHERE national_id=?", (vote.national_id,)).fetchone()
+    if not voter or voter["has_voted"] or voter["revoked"]:
+        conn.close()
+        raise HTTPException(status_code=403, detail="Unauthorized, already voted, or revoked")
 
     tracking_code = "UON-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
     
     conn.execute("UPDATE voters SET has_voted=1 WHERE national_id=?", (vote.national_id,))
-    # Now we insert the actual candidate_id sent from the frontend!
     conn.execute("INSERT INTO votes (tracking_code, national_id, candidate_id) VALUES (?, ?, ?)", 
                  (tracking_code, vote.national_id, vote.candidate_id))
+    
+    log_audit(conn, "VOTE_CAST", f"Vote cast successfully by {voter['name']}", "System")
     conn.commit()
     conn.close()
     return {"status": "success", "tracking_code": tracking_code}
+
+@app.get("/verify/{tracking_code}")
+def verify_receipt(tracking_code: str):
+    conn = get_db()
+    vote = conn.execute('''
+        SELECT v.tracking_code, v.ts, c.name as candidate_name, c.position, c.party
+        FROM votes v 
+        JOIN candidates c ON v.candidate_id = c.id 
+        WHERE v.tracking_code = ?
+    ''', (tracking_code,)).fetchone()
+    conn.close()
+    
+    if not vote:
+        raise HTTPException(status_code=404, detail="Receipt not found on the public bulletin board.")
+    return dict(vote)
 
 @app.get("/admin/tally")
 def get_tally():

@@ -24,15 +24,19 @@ export default function App() {
   const [view, setView] = useState('HOME'); 
   const [candidates, setCandidates] = useState([]);
   const [cryptoParams, setCryptoParams] = useState(null);
+  const [config, setConfig] = useState({ name: 'UoN General Election', status: 'open' });
   
   const [adminCreds, setAdminCreds] = useState({ user: '', pass: '' });
   const [voterCreds, setVoterCreds] = useState({ id: '', pin: '' });
   const [activeVoter, setActiveVoter] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [message, setMessage] = useState(""); 
+  const [verifyCode, setVerifyCode] = useState("");
+  const [verifyResult, setVerifyResult] = useState(null);
 
   useEffect(() => {
     fetch(`${API_BASE}/public-key`).then(r => r.json()).then(setCryptoParams);
+    fetch(`${API_BASE}/settings`).then(r => r.json()).then(setConfig).catch(() => {});
     refreshCandidates();
   }, [view]);
 
@@ -52,10 +56,13 @@ export default function App() {
   const renderHome = () => (
     <div style={{ textAlign: 'center', marginTop: '50px' }}>
       <img src={uonLogo} alt="University of Nairobi Logo" style={{ width: '100%', maxWidth: '300px', borderRadius: '8px' }} />
-      <h1 style={{ color: COLORS.primary, marginTop: '30px' }}>Welcome to the Secure E-Voting Portal</h1>
-      <p style={{ fontSize: '1.2em' }}>Please select your portal to continue.</p>
-      <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '30px' }}>
+      <h1 style={{ color: COLORS.primary, marginTop: '30px' }}>{config.name} Portal</h1>
+      <p style={{ fontSize: '1.2em' }}>
+        Voting is currently: <strong style={{ color: config.status === 'open' ? 'green' : 'red' }}>{config.status.toUpperCase()}</strong>
+      </p>
+      <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '30px', flexWrap: 'wrap' }}>
         <button style={{ ...styles.btn, fontSize: '1.2em', padding: '15px 30px' }} onClick={() => setView('VOTER_LOGIN')}>Cast Your Vote</button>
+        <button style={{...styles.btnOutline, fontSize: '1.2em', padding: '15px 30px'}} onClick={() => setView('VERIFY_RECEIPT')}>Verify My Receipt</button>
         <button style={styles.btnOutline} onClick={() => setView('ADMIN_LOGIN')}>Admin / Election Officials</button>
       </div>
     </div>
@@ -94,6 +101,32 @@ export default function App() {
         });
       }}>Authenticate & Vote</button>
       <button style={{ ...styles.btnOutline, width: '100%', marginTop: '10px' }} onClick={() => setView('HOME')}>Back</button>
+    </div>
+  );
+
+  const renderVerifyReceipt = () => (
+    <div style={{ ...styles.card, maxWidth: '500px', margin: '50px auto' }}>
+      <h2 style={{ color: COLORS.primary }}>Verify Public Receipt</h2>
+      <p>Enter your tracking code to verify your vote on the bulletin board.</p>
+      <input style={styles.input} placeholder="UON-XXXXXXXXXX" onChange={e => setVerifyCode(e.target.value)} />
+      <button style={{ ...styles.btn, width: '100%' }} onClick={() => {
+        fetch(`${API_BASE}/verify/${verifyCode}`)
+          .then(async r => {
+            const data = await r.json();
+            if (!r.ok) { setVerifyResult(null); alert(data.detail); }
+            else setVerifyResult(data);
+          });
+      }}>Verify Now</button>
+      
+      {verifyResult && (
+        <div style={{ marginTop: '20px', padding: '15px', background: '#e8f5e9', borderRadius: '8px' }}>
+          <h3 style={{ margin: '0 0 10px 0', color: COLORS.primary }}>✅ Vote Verified</h3>
+          <p><strong>Candidate:</strong> {verifyResult.candidate_name} ({verifyResult.party})</p>
+          <p><strong>Position:</strong> {verifyResult.position}</p>
+          <p><strong>Timestamp:</strong> {verifyResult.ts}</p>
+        </div>
+      )}
+      <button style={{ ...styles.btnOutline, width: '100%', marginTop: '20px' }} onClick={() => { setVerifyResult(null); setView('HOME'); }}>Back</button>
     </div>
   );
 
@@ -161,7 +194,7 @@ export default function App() {
 
   return (
     <div style={styles.container}>
-      {view !== 'HOME' && view !== 'RECEIPT' && (
+      {view !== 'HOME' && view !== 'RECEIPT' && view !== 'VERIFY_RECEIPT' && (
         <div style={styles.header}>
           <h2 style={{ margin: 0, color: COLORS.primary }}>UoN E-Voting</h2>
           <button style={styles.btnOutline} onClick={() => { setActiveVoter(null); setView('HOME'); }}>Log Out</button>
@@ -171,26 +204,33 @@ export default function App() {
       {view === 'HOME' && renderHome()}
       {view === 'ADMIN_LOGIN' && renderAdminLogin()}
       {view === 'VOTER_LOGIN' && renderVoterLogin()}
+      {view === 'VERIFY_RECEIPT' && renderVerifyReceipt()}
       {view === 'VOTING' && renderVoting()}
       {view === 'RECEIPT' && renderReceipt()}
       
-      {view === 'ADMIN_DASHBOARD' && <AdminDashboard candidates={candidates} refreshCandidates={refreshCandidates} />}
+      {view === 'ADMIN_DASHBOARD' && <AdminDashboard candidates={candidates} refreshCandidates={refreshCandidates} config={config} setConfig={setConfig} />}
     </div>
   );
 }
 
-function AdminDashboard({ candidates, refreshCandidates }) {
+function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
   const [tab, setTab] = useState('OVERVIEW');
   const [newCand, setNewCand] = useState({ name: '', party: '', position: '', photo_url: '' });
   const [editingId, setEditingId] = useState(null);
   const [newVoter, setNewVoter] = useState({ name: '', national_id: '' });
   const [voters, setVoters] = useState([]);
   const [results, setResults] = useState({ total_cast: 0, registered: 0, results: {} });
+  const [auditLogs, setAuditLogs] = useState([]);
 
   const fetchVoters = () => fetch(`${API_BASE}/admin/voters`).then(r => r.json()).then(setVoters);
   const fetchResults = () => fetch(`${API_BASE}/admin/tally`).then(r => r.json()).then(setResults);
+  const fetchAudit = () => fetch(`${API_BASE}/admin/audit`).then(r => r.json()).then(setAuditLogs);
 
-  useEffect(() => { fetchVoters(); fetchResults(); }, [tab]);
+  useEffect(() => { 
+    if (tab === 'VOTERS') fetchVoters(); 
+    if (tab === 'RESULTS' || tab === 'OVERVIEW') fetchResults(); 
+    if (tab === 'AUDIT') fetchAudit();
+  }, [tab]);
 
   const saveCandidate = () => {
     const url = editingId ? `${API_BASE}/admin/candidates/${editingId}` : `${API_BASE}/admin/candidates`;
@@ -207,11 +247,7 @@ function AdminDashboard({ candidates, refreshCandidates }) {
 
   const deleteCandidate = (id) => {
     if (!window.confirm("Are you sure you want to delete this candidate?")) return;
-    fetch(`${API_BASE}/admin/candidates/${id}`, { method: 'DELETE' })
-      .then(() => {
-        alert("Candidate deleted.");
-        refreshCandidates();
-      });
+    fetch(`${API_BASE}/admin/candidates/${id}`, { method: 'DELETE' }).then(() => { alert("Candidate deleted."); refreshCandidates(); });
   };
 
   const startEdit = (c) => {
@@ -231,7 +267,6 @@ function AdminDashboard({ candidates, refreshCandidates }) {
   const handleBulkUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    
     const reader = new FileReader();
     reader.onload = (event) => {
       const rows = event.target.result.split('\n').filter(row => row.trim() !== '');
@@ -240,30 +275,21 @@ function AdminDashboard({ candidates, refreshCandidates }) {
         return { name: name?.trim(), national_id: national_id?.trim() };
       }).filter(v => v.name && v.national_id);
 
-      if (parsedVoters.length === 0) {
-        alert("No valid data found. Ensure CSV format is: Name,National_ID");
-        return;
-      }
+      if (parsedVoters.length === 0) { alert("No valid data found. Ensure CSV format is: Name,National_ID"); return; }
 
       fetch(`${API_BASE}/admin/voters/bulk`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ voters: parsedVoters })
-      })
-      .then(async r => {
+      }).then(async r => {
         const data = await r.json();
-        
         let csvContent = "data:text/csv;charset=utf-8,Name,National ID,Status,Secure PIN\n";
-        data.results.forEach(res => {
-          csvContent += `${res.name},${res.national_id},${res.status},${res.pin}\n`;
-        });
-        
+        data.results.forEach(res => { csvContent += `${res.name},${res.national_id},${res.status},${res.pin}\n`; });
         const encodedUri = encodeURI(csvContent);
         const link = document.createElement("a");
         link.setAttribute("href", encodedUri);
         link.setAttribute("download", "UoN_Voter_Registry_PINs.csv");
         document.body.appendChild(link);
         link.click();
-        
         alert(`Bulk registration complete! A spreadsheet containing the secure PINs is downloading now.`);
         fetchVoters();
       });
@@ -271,10 +297,24 @@ function AdminDashboard({ candidates, refreshCandidates }) {
     reader.readAsText(file);
   };
 
+  const exportResultsCSV = () => {
+    let csvContent = "data:text/csv;charset=utf-8,Candidate,Party,Position,Votes,Percentage\n";
+    candidates.forEach(c => {
+      const votes = results.results[c.id] || 0;
+      const pct = results.total_cast ? ((votes / results.total_cast) * 100).toFixed(1) : 0;
+      csvContent += `${c.name},${c.party},${c.position},${votes},${pct}%\n`;
+    });
+    const link = document.createElement("a");
+    link.setAttribute("href", encodeURI(csvContent));
+    link.setAttribute("download", "UoN_Election_Results.csv");
+    document.body.appendChild(link);
+    link.click();
+  };
+
   return (
     <div>
-      <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
-        {['OVERVIEW', 'CANDIDATES', 'VOTERS', 'RESULTS'].map(t => (
+      <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', flexWrap: 'wrap' }}>
+        {['OVERVIEW', 'CANDIDATES', 'VOTERS', 'RESULTS', 'AUDIT', 'SETTINGS'].map(t => (
           <button key={t} style={tab === t ? styles.btn : styles.btnOutline} onClick={() => setTab(t)}>{t}</button>
         ))}
       </div>
@@ -282,9 +322,9 @@ function AdminDashboard({ candidates, refreshCandidates }) {
       {tab === 'OVERVIEW' && (
         <div style={styles.card}>
           <h2>Election Overview</h2>
-          <div style={{ display: 'flex', gap: '20px', justifyContent: 'space-between' }}>
-            <div style={{ padding: '20px', background: COLORS.primary, color: 'white', borderRadius: '8px', flex: 1 }}><h3>Registered</h3><p style={{fontSize:'2em', margin:0}}>{results.registered}</p></div>
-            <div style={{ padding: '20px', background: COLORS.secondary, color: 'white', borderRadius: '8px', flex: 1 }}><h3>Votes Cast</h3><p style={{fontSize:'2em', margin:0}}>{results.total_cast}</p></div>
+          <div style={{ display: 'flex', gap: '20px', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+            <div style={{ padding: '20px', background: COLORS.primary, color: 'white', borderRadius: '8px', flex: 1, minWidth: '200px' }}><h3>Registered</h3><p style={{fontSize:'2em', margin:0}}>{results.registered}</p></div>
+            <div style={{ padding: '20px', background: COLORS.secondary, color: 'white', borderRadius: '8px', flex: 1, minWidth: '200px' }}><h3>Votes Cast</h3><p style={{fontSize:'2em', margin:0}}>{results.total_cast}</p></div>
           </div>
         </div>
       )}
@@ -318,33 +358,38 @@ function AdminDashboard({ candidates, refreshCandidates }) {
       {tab === 'VOTERS' && (
         <div style={styles.card}>
           <h2>Voter Registry Management</h2>
-          <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
-            <input style={styles.input} placeholder="Full Name" onChange={e => setNewVoter({...newVoter, name: e.target.value})} />
-            <input style={styles.input} placeholder="National ID" onChange={e => setNewVoter({...newVoter, national_id: e.target.value})} />
-            <button style={{ ...styles.btn, width: '200px' }} onClick={regVoter}>Register (Single)</button>
+          <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', flexWrap: 'wrap' }}>
+            <input style={{...styles.input, flex: 1}} placeholder="Full Name" onChange={e => setNewVoter({...newVoter, name: e.target.value})} />
+            <input style={{...styles.input, flex: 1}} placeholder="National ID" onChange={e => setNewVoter({...newVoter, national_id: e.target.value})} />
+            <button style={{ ...styles.btn, width: '200px', height: '42px' }} onClick={regVoter}>Register (Single)</button>
           </div>
           
           <hr style={{ margin: '20px 0', border: '1px solid #eee' }} />
           
           <h3>Bulk Registration (CSV Upload)</h3>
-          <p style={{ fontSize: '0.9em', color: '#666' }}>Upload a .csv file formatted with two columns: <b>Name, National_ID</b> (no header row).</p>
-          <input type="file" accept=".csv" onChange={handleBulkUpload} style={{ padding: '10px', border: '2px dashed #ccc', width: '100%' }} />
+          <p style={{ fontSize: '0.9em', color: '#666' }}>Upload a .csv file formatted with two columns: <b>Name, National_ID</b>.</p>
+          <input type="file" accept=".csv" onChange={handleBulkUpload} style={{ padding: '10px', border: '2px dashed #ccc', width: '100%', boxSizing: 'border-box' }} />
 
           <h3 style={{marginTop: '30px'}}>Registry List</h3>
           <ul style={{ listStyle: 'none', padding: 0 }}>
             {voters.map(v => (
-              <li key={v.national_id} style={{ padding: '10px', borderBottom: '1px solid #ccc', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <li key={v.national_id} style={{ padding: '10px', borderBottom: '1px solid #ccc', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: v.revoked ? '#ffebee' : 'transparent' }}>
                 <span>{v.name} (ID: {v.national_id})</span>
                 <div>
-                  <span style={{ color: v.has_voted ? 'green' : 'red', fontWeight: 'bold', marginRight: '15px' }}>{v.has_voted ? 'VOTED' : 'ELIGIBLE'}</span>
+                  {v.revoked ? (
+                    <span style={{ color: 'darkred', fontWeight: 'bold', marginRight: '15px' }}>REVOKED</span>
+                  ) : (
+                    <span style={{ color: v.has_voted ? 'green' : 'gray', fontWeight: 'bold', marginRight: '15px' }}>{v.has_voted ? 'VOTED' : 'ELIGIBLE'}</span>
+                  )}
+                  <button style={{...styles.btnOutline, padding: '5px 10px', fontSize: '0.8em', marginRight: '5px'}} onClick={() => {
+                    fetch(`${API_BASE}/admin/voters/${v.national_id}/revoke`, { method: 'PUT' }).then(() => fetchVoters());
+                  }}>{v.revoked ? "Reinstate" : "Revoke"}</button>
                   <button style={{...styles.btnOutline, padding: '5px 10px', fontSize: '0.8em'}} onClick={() => {
                     if(!window.confirm(`Generate a new PIN for ${v.name}?`)) return;
-                    fetch(`${API_BASE}/admin/voters/${v.national_id}/reset-pin`, { method: 'POST' })
-                      .then(async r => {
+                    fetch(`${API_BASE}/admin/voters/${v.national_id}/reset-pin`, { method: 'POST' }).then(async r => {
                         const data = await r.json();
-                        if(r.ok) alert(`New PIN for ${v.name} is: ${data.new_pin}\nRecord this immediately!`);
-                        else alert(data.detail);
-                      });
+                        if(r.ok) alert(`New PIN for ${v.name} is: ${data.new_pin}\nRecord this immediately!`); else alert(data.detail);
+                    });
                   }}>Reset PIN</button>
                 </div>
               </li>
@@ -355,20 +400,59 @@ function AdminDashboard({ candidates, refreshCandidates }) {
 
       {tab === 'RESULTS' && (
         <div style={styles.card}>
-          <h2>Live Tally Results 🏆</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h2>Live Tally Results 🏆</h2>
+            <button style={styles.btnOutline} onClick={exportResultsCSV}>📥 Export CSV</button>
+          </div>
           <p>Results are recovered from the homomorphic sum using threshold decryption.</p>
           {candidates.map(c => {
             const votes = results.results[c.id] || 0;
             const pct = results.total_cast ? (votes / results.total_cast) * 100 : 0;
             return (
               <div key={c.id} style={{ marginBottom: '20px' }}>
-                <p><b>{c.name}</b>: {votes} votes ({pct.toFixed(1)}%)</p>
+                <p><b>{c.name}</b> ({c.position}): {votes} votes ({pct.toFixed(1)}%)</p>
                 <div style={{ background: '#eee', width: '100%', height: '25px', borderRadius: '5px' }}>
                   <div style={{ background: COLORS.primary, width: `${pct}%`, height: '100%', borderRadius: '5px', transition: 'width 0.5s' }}></div>
                 </div>
               </div>
             )
           })}
+        </div>
+      )}
+
+      {tab === 'AUDIT' && (
+        <div style={styles.card}>
+          <h2>System Audit Log</h2>
+          <p>Irrefutable records of all administrative and system actions.</p>
+          <ul style={{ listStyle: 'none', padding: 0, maxHeight: '400px', overflowY: 'auto' }}>
+            {auditLogs.map(log => (
+              <li key={log.id} style={{ padding: '10px', borderBottom: '1px solid #eee', fontSize: '0.9em' }}>
+                <span style={{ color: '#888', marginRight: '10px' }}>{new Date(log.ts).toLocaleString()}</span>
+                <span style={{ fontWeight: 'bold', color: COLORS.primary, marginRight: '10px' }}>[{log.action}]</span>
+                <span>{log.details}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {tab === 'SETTINGS' && (
+        <div style={styles.card}>
+          <h2>Election Settings</h2>
+          <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Election Name</label>
+          <input style={styles.input} value={config.name} onChange={e => setConfig({...config, name: e.target.value})} />
+          
+          <label style={{ display: 'block', marginTop: '15px', marginBottom: '5px', fontWeight: 'bold' }}>Voting Status</label>
+          <select style={styles.input} value={config.status} onChange={e => setConfig({...config, status: e.target.value})}>
+            <option value="open">Open (Voting Allowed)</option>
+            <option value="closed">Closed (Voting Disabled)</option>
+          </select>
+
+          <button style={{...styles.btn, marginTop: '20px'}} onClick={() => {
+            fetch(`${API_BASE}/admin/settings`, {
+              method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config)
+            }).then(() => alert('Settings Saved Successfully!'));
+          }}>Save Settings</button>
         </div>
       )}
     </div>
