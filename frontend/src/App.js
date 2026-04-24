@@ -45,11 +45,12 @@ function VerifyReceipt({ setView }) {
         fetch(`${API_BASE}/verify/${code}`)
           .then(async r => {
             const data = await r.json();
-            if (!r.ok) { setResult(null); alert(data.detail); } else setResult(data);
-          });
+            if (!r.ok) { setResult(null); alert(data.detail || "Receipt not found."); } else setResult(data);
+          })
+          .catch(() => alert("Error connecting to server."));
       }}>Verify Now</button>
       
-      {result && (
+      {result && result.positions && (
         <div style={{ marginTop: '20px', padding: '15px', background: '#e8f5e9', borderRadius: '8px' }}>
           <h3 style={{ margin: '0 0 10px 0', color: COLORS.primary }}>✅ Vote Verified</h3>
           <p style={{fontSize: '12px'}}><strong>Timestamp:</strong> {new Date(result.ts + 'Z').toLocaleString()}</p>
@@ -81,14 +82,21 @@ export default function App() {
   const [receipt, setReceipt] = useState(null);
   
   const countdown = useCountdown(config.end_time);
-
-  // Dynamic logic: Force closure if the timer is ENDED
   const isVotingOpen = config.status === 'open' && countdown !== 'ENDED';
 
-  const refreshCandidates = () => fetch(`${API_BASE}/candidates`).then(r => r.json()).then(setCandidates);
+  // Defensive fetching to completely prevent React crashes
+  const refreshCandidates = () => {
+    fetch(`${API_BASE}/candidates`)
+      .then(r => r.json())
+      .then(data => setCandidates(Array.isArray(data) ? data : []))
+      .catch(() => setCandidates([]));
+  };
 
   useEffect(() => {
-    fetch(`${API_BASE}/settings`).then(r => r.json()).then(setConfig).catch(() => {});
+    fetch(`${API_BASE}/settings`)
+      .then(r => r.json())
+      .then(data => { if (data && data.name) setConfig(data); })
+      .catch(() => {});
     refreshCandidates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
@@ -137,9 +145,9 @@ export default function App() {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ national_id: voterCreds.id, pin: voterCreds.pin })
         }).then(async r => {
           const data = await r.json();
-          if (!r.ok) alert(data.detail);
+          if (!r.ok) alert(data.detail || "Error connecting");
           else { setActiveVoter(voterCreds.id); setView('VOTING'); }
-        });
+        }).catch(() => alert("Network Error. Is the backend running?"));
       }}>Authenticate & Vote</button>
       <button style={{ ...styles.btnOutline, width: '100%', marginTop: '10px' }} onClick={() => setView('HOME')}>Back</button>
     </div>
@@ -179,7 +187,9 @@ function VotingBooth({ countdown, activeVoter, candidates, onComplete, onExit })
   const [boothPos, setBoothPos] = useState(0);
   const [phase, setPhase] = useState('voting');
   
-  const votingPositions = Array.from(new Set(candidates.map(c => c.position)));
+  // Protective array check
+  const safeCandidates = Array.isArray(candidates) ? candidates : [];
+  const votingPositions = Array.from(new Set(safeCandidates.map(c => c.position).filter(Boolean)));
 
   if (votingPositions.length === 0) return (
     <div style={{ textAlign: 'center', marginTop: '50px' }}>
@@ -189,7 +199,7 @@ function VotingBooth({ countdown, activeVoter, candidates, onComplete, onExit })
   );
 
   const currPos = votingPositions[boothPos];
-  const currCands = candidates.filter(c => c.position === currPos);
+  const currCands = safeCandidates.filter(c => c.position === currPos);
   const isLast = boothPos === votingPositions.length - 1;
 
   const next = () => { if (isLast) setPhase('review'); else setBoothPos(p => p + 1); };
@@ -219,7 +229,7 @@ function VotingBooth({ countdown, activeVoter, candidates, onComplete, onExit })
         <div style={{ background: '#fffbee', padding: '10px', borderRadius: '5px', margin: '15px 0', color: '#92400e', fontSize:'14px' }}>⚠ Please review carefully. Once submitted, your ballot cannot be changed.</div>
         {votingPositions.map(pos => {
           const sel = selections[pos];
-          const cand = sel && sel !== 'SKIP' ? candidates.find(c => c.id === sel) : null;
+          const cand = sel && sel !== 'SKIP' ? safeCandidates.find(c => c.id === sel) : null;
           return (
             <div key={pos} style={{ display: 'flex', alignItems: 'center', padding: '15px', border: '1px solid #ddd', borderRadius: '8px', marginBottom: '10px', background: cand ? '#f0fdf4' : '#fef2f2', flexWrap: 'wrap', gap: '10px' }}>
               <div style={{ flex: 1 }}>
@@ -282,16 +292,31 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
   
   const [newVoter, setNewVoter] = useState({ name: '', national_id: '' });
   const [voters, setVoters] = useState([]);
-  const [voterSearch, setVoterSearch] = useState(''); // NEW SEARCH STATE
-
+  const [voterSearch, setVoterSearch] = useState(''); 
   const [results, setResults] = useState({ total_cast: 0, registered: 0, results: {} });
+  
   const fileRef = useRef(null);
 
-  const uniquePositions = Array.from(new Set(candidates.map(c => c.position)));
+  // Safely map candidates and voters to prevent React crashes
+  const safeCandidates = Array.isArray(candidates) ? candidates : [];
+  const safeVoters = Array.isArray(voters) ? voters : [];
+  
+  const uniquePositions = Array.from(new Set(safeCandidates.map(c => c.position).filter(Boolean)));
   const filterPositions = ['All', ...uniquePositions];
 
-  const fetchVoters = () => fetch(`${API_BASE}/admin/voters`).then(r => r.json()).then(setVoters);
-  const fetchResults = () => fetch(`${API_BASE}/admin/tally`).then(r => r.json()).then(setResults);
+  const fetchVoters = () => {
+      fetch(`${API_BASE}/admin/voters`)
+        .then(r => r.json())
+        .then(data => setVoters(Array.isArray(data) ? data : []))
+        .catch(() => setVoters([]));
+  };
+
+  const fetchResults = () => {
+      fetch(`${API_BASE}/admin/tally`)
+        .then(r => r.json())
+        .then(data => setResults(data && data.results ? data : { total_cast: 0, registered: 0, results: {} }))
+        .catch(() => setResults({ total_cast: 0, registered: 0, results: {} }));
+  };
 
   useEffect(() => { 
     if (tab === 'VOTERS') fetchVoters(); 
@@ -344,6 +369,8 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
         body: JSON.stringify({ voters: parsedVoters })
       }).then(async r => {
         const data = await r.json();
+        if(!data.results) { alert("An error occurred processing the CSV."); return; }
+        
         let csvContent = "data:text/csv;charset=utf-8,Name,National ID,Status,Secure PIN\n";
         data.results.forEach(res => { csvContent += `${res.name},${res.national_id},${res.status},${res.pin}\n`; });
         const encodedUri = encodeURI(csvContent);
@@ -354,7 +381,7 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
         link.click();
         alert(`Bulk registration complete! Downloading PIN spreadsheet.`);
         fetchVoters();
-      });
+      }).catch(() => alert("Network error connecting to backend."));
     };
     reader.readAsText(file);
   };
@@ -381,7 +408,7 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
     };
 
     getBase64Image(uonLogo).then(base64Logo => {
-        const targetVoters = specificVotersList || voters.filter(v => !v.revoked);
+        const targetVoters = specificVotersList || safeVoters.filter(v => !v.revoked);
         
         if (targetVoters.length === 0) { alert("No active voters to print!"); return; }
 
@@ -423,7 +450,7 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
     });
   };
 
-  const activeVotersCount = voters.filter(v => !v.revoked).length;
+  const activeVotersCount = safeVoters.filter(v => !v.revoked).length;
   const turnoutPct = activeVotersCount > 0 ? ((results.total_cast / activeVotersCount) * 100).toFixed(1) : 0;
 
   return (
@@ -475,7 +502,7 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
                 </select>
             </div>
             <ul style={{ listStyle: 'none', padding: 0, marginTop: '15px' }}>
-              {candidates.filter(c => candFilter === 'All' || c.position === candFilter).map(c => (
+              {safeCandidates.filter(c => candFilter === 'All' || c.position === candFilter).map(c => (
                 <li key={c.id} style={{ display: 'flex', alignItems: 'center', padding: '10px', borderBottom: '1px solid #eee', flexWrap: 'wrap', gap: '10px' }}>
                   {c.photo_url ? <img src={c.photo_url} style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} alt=""/> : <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: '#ccc' }}></div>}
                   <div style={{ flex: 1, minWidth: '150px' }}>
@@ -512,7 +539,6 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
 
           <hr style={{ margin: '20px 0', border: '1px solid #eee' }} />
 
-          {/* NEW SEARCH BAR */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginTop: '30px' }}>
             <h3 style={{margin: 0}}>Registry List</h3>
             <input 
@@ -524,8 +550,8 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
           </div>
 
           <ul style={{ listStyle: 'none', padding: 0, marginTop: '15px' }}>
-            {voters
-              .filter(v => v.national_id.includes(voterSearch) || v.name.toLowerCase().includes(voterSearch.toLowerCase()))
+            {safeVoters
+              .filter(v => (v.national_id || '').toString().toLowerCase().includes(voterSearch.toLowerCase()) || (v.name || '').toLowerCase().includes(voterSearch.toLowerCase()))
               .map(v => (
               <li key={v.national_id} style={{ padding: '10px', borderBottom: '1px solid #ccc', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: v.revoked ? '#ffebee' : 'transparent', flexWrap: 'wrap', gap: '10px' }}>
                 <div style={{wordBreak: 'break-word', flex: '1 1 200px'}}>
@@ -540,8 +566,8 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
                 </div>
               </li>
             ))}
-            {voters.filter(v => v.national_id.includes(voterSearch) || v.name.toLowerCase().includes(voterSearch.toLowerCase())).length === 0 && (
-                <li style={{textAlign: 'center', padding: '20px', color: '#666'}}>No voters found matching "{voterSearch}"</li>
+            {safeVoters.filter(v => (v.national_id || '').toString().toLowerCase().includes(voterSearch.toLowerCase()) || (v.name || '').toLowerCase().includes(voterSearch.toLowerCase())).length === 0 && (
+                <li style={{textAlign: 'center', padding: '20px', color: '#666'}}>No voters found matching your search.</li>
             )}
           </ul>
         </div>
@@ -551,15 +577,15 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
         <div style={styles.card}>
           <h2>Live Tally Results 🏆</h2>
           {uniquePositions.map(pos => {
-            const posCands = candidates.filter(c => c.position === pos).sort((a,b) => (results.results[b.id]||0) - (results.results[a.id]||0));
+            const posCands = safeCandidates.filter(c => c.position === pos).sort((a,b) => (results?.results?.[b.id]||0) - (results?.results?.[a.id]||0));
             if(posCands.length === 0) return null;
-            const maxV = Math.max(...posCands.map(c => results.results[c.id] || 0), 1);
+            const maxV = Math.max(...posCands.map(c => results?.results?.[c.id] || 0), 1);
             
             return (
               <div key={pos} style={{ marginBottom: '30px' }}>
                 <h3 style={{ borderBottom: '2px solid #eee', paddingBottom: '5px' }}>{pos}</h3>
                 {posCands.map((c, i) => {
-                  const v = results.results[c.id] || 0;
+                  const v = results?.results?.[c.id] || 0;
                   const pct = results.total_cast > 0 ? Math.round((v / results.total_cast) * 100) : 0;
                   const isWin = i === 0 && v > 0;
                   return (
@@ -588,10 +614,10 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
         <div style={styles.card}>
           <h2>Election Settings</h2>
           <label style={{ display: 'block', fontWeight: 'bold' }}>Election Name</label>
-          <input style={styles.input} value={config.name} onChange={e => setConfig({...config, name: e.target.value})} />
+          <input style={styles.input} value={config.name || ''} onChange={e => setConfig({...config, name: e.target.value})} />
           
           <label style={{ display: 'block', fontWeight: 'bold', marginTop: '10px' }}>Manual Voting Override</label>
-          <select style={styles.input} value={config.status} onChange={e => setConfig({...config, status: e.target.value})}>
+          <select style={styles.input} value={config.status || 'open'} onChange={e => setConfig({...config, status: e.target.value})}>
             <option value="open">🟢 Open (If Timer Allows)</option>
             <option value="closed">🔴 Closed (Force Disable Voting)</option>
           </select>
