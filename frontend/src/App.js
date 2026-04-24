@@ -84,7 +84,6 @@ export default function App() {
   const countdown = useCountdown(config.end_time);
   const isVotingOpen = config.status === 'open' && countdown !== 'ENDED';
 
-  // Defensive fetching to completely prevent React crashes
   const refreshCandidates = () => {
     fetch(`${API_BASE}/candidates`)
       .then(r => r.json())
@@ -187,7 +186,6 @@ function VotingBooth({ countdown, activeVoter, candidates, onComplete, onExit })
   const [boothPos, setBoothPos] = useState(0);
   const [phase, setPhase] = useState('voting');
   
-  // Protective array check
   const safeCandidates = Array.isArray(candidates) ? candidates : [];
   const votingPositions = Array.from(new Set(safeCandidates.map(c => c.position).filter(Boolean)));
 
@@ -297,7 +295,6 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
   
   const fileRef = useRef(null);
 
-  // Safely map candidates and voters to prevent React crashes
   const safeCandidates = Array.isArray(candidates) ? candidates : [];
   const safeVoters = Array.isArray(voters) ? voters : [];
   
