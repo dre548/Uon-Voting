@@ -144,7 +144,6 @@ function VotingBooth({ activeVoter, candidates, config, cryptoParams, generateHa
   const skip = () => { setSelections(p => ({...p, [currPos]: 'SKIP'})); if (isLast) setPhase('review'); else setBoothPos(p => p + 1); };
 
   const submitFinalBallot = async () => {
-    // Submit only the first valid selection for this prototype to match backend signature
     const validSelectionPos = Object.keys(selections).find(k => selections[k] !== 'SKIP');
     if(!validSelectionPos) { alert("You must select at least one candidate."); return; }
     
@@ -212,7 +211,7 @@ function VotingBooth({ activeVoter, candidates, config, cryptoParams, generateHa
           {boothPos > 0 && <button style={{...styles.btnOutline, marginRight: '10px'}} onClick={back}>← Back</button>}
           <button style={{...styles.btnOutline, color: '#D97706', borderColor: '#fde68a'}} onClick={skip}>Skip →</button>
         </div>
-        <button style={{...styles.btn, opacity: selections[currPos] ? 1 : 0.5}} disabled:={!selections[currPos]} onClick={next}>{isLast ? 'Review Selections →' : 'Next Position →'}</button>
+        <button style={{...styles.btn, opacity: selections[currPos] ? 1 : 0.5}} disabled={!selections[currPos]} onClick={next}>{isLast ? 'Review Selections →' : 'Next Position →'}</button>
       </div>
     </div>
   );
@@ -318,25 +317,6 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
 
         const newWin = window.open('', '', 'width=800,height=600');
         newWin.document.write(htmlTemplate);
-        newWin.document.close();
-    });
-  };
-
-    getBase64Image(uonLogo).then(base64Logo => {
-        const activeVoters = voters.filter(v => !v.revoked);
-        const cards = activeVoters.map(v => `
-            <div style="border: 2px solid #004d28; border-radius: 8px; padding: 15px; margin: 10px; width: 30%; display: inline-block; text-align: center; font-family: sans-serif; page-break-inside: avoid;">
-            <img src="${base64Logo}" style="width: 50px; margin-bottom: 10px;" />
-            <div style="background: #004d28; color: white; padding: 5px; font-size: 10px; font-weight: bold;">UON OFFICIAL CREDENTIAL</div>
-            <h3 style="margin: 10px 0 5px;">${v.name}</h3>
-            <p style="margin: 0; font-size: 12px; color: #666;">ID: ${v.national_id}</p>
-            <div style="background: #fffbee; border: 1px dashed #d4af37; padding: 10px; margin-top: 10px; font-size: 18px; font-weight: bold; letter-spacing: 3px;">******</div>
-            <p style="font-size: 9px; color: red; margin-top: 5px;">PIN issued at registration desk</p>
-            </div>
-        `).join('');
-
-        const newWin = window.open('', '', 'width=800,height=600');
-        newWin.document.write(`<html><head><title>Print Voter Cards</title></head><body onload="window.print()">${cards}</body></html>`);
         newWin.document.close();
     });
   };
