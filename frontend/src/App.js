@@ -32,6 +32,46 @@ function useCountdown(endTime) {
   return rem;
 }
 
+// 1. EXTRACTED COMPONENT to fix Vercel React Hook crashes
+function VerifyReceipt({ setView }) {
+  const [code, setCode] = useState('');
+  const [result, setResult] = useState(null);
+
+  return (
+    <div style={{ ...styles.card, maxWidth: '500px', margin: '50px auto' }}>
+      <h2 style={{ color: COLORS.primary }}>Verify Public Receipt</h2>
+      <p>Enter your tracking code to verify your vote was counted.</p>
+      <input style={styles.input} placeholder="UON-XXXXXXXXXX" onChange={e => setCode(e.target.value)} />
+      <button style={{ ...styles.btn, width: '100%' }} onClick={() => {
+        fetch(`${API_BASE}/verify/${code}`)
+          .then(async r => {
+            const data = await r.json();
+            if (!r.ok) { setResult(null); alert(data.detail); } else setResult(data);
+          });
+      }}>Verify Now</button>
+      
+      {result && (
+        <div style={{ marginTop: '20px', padding: '15px', background: '#e8f5e9', borderRadius: '8px' }}>
+          <h3 style={{ margin: '0 0 10px 0', color: COLORS.primary }}>✅ Vote Verified</h3>
+          <p><strong>Timestamp:</strong> {new Date(result.ts + 'Z').toLocaleString()}</p>
+          <div style={{marginTop: '15px'}}>
+             {result.positions.map((p, idx) => (
+               <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px', background: '#fff', padding: '10px', borderRadius: '5px', border: '1px solid #ccc' }}>
+                  {p.photo_url ? <img src={p.photo_url} style={{width: '45px', height: '45px', borderRadius: '50%', objectFit: 'cover'}} alt=""/> : <div style={{width: '45px', height: '45px', borderRadius: '50%', background: '#ccc'}}></div>}
+                  <div>
+                      <div style={{fontSize: '11px', color: '#666', textTransform: 'uppercase'}}>{p.position}</div>
+                      <div><strong>{p.candidate_name}</strong> ({p.party})</div>
+                  </div>
+               </div>
+             ))}
+          </div>
+        </div>
+      )}
+      <button style={{ ...styles.btnOutline, width: '100%', marginTop: '20px' }} onClick={() => setView('HOME')}>Back to Home</button>
+    </div>
+  );
+}
+
 export default function App() {
   const [view, setView] = useState('HOME'); 
   const [candidates, setCandidates] = useState([]);
@@ -43,12 +83,13 @@ export default function App() {
   
   const countdown = useCountdown(config.end_time);
 
+  const refreshCandidates = () => fetch(`${API_BASE}/candidates`).then(r => r.json()).then(setCandidates);
+
   useEffect(() => {
     fetch(`${API_BASE}/settings`).then(r => r.json()).then(setConfig).catch(() => {});
     refreshCandidates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
-
-  const refreshCandidates = () => fetch(`${API_BASE}/candidates`).then(r => r.json()).then(setCandidates);
 
   const renderHome = () => (
     <div style={{ textAlign: 'center', marginTop: '50px' }}>
@@ -98,44 +139,6 @@ export default function App() {
     </div>
   );
 
-  const renderVerifyReceipt = () => {
-      const [code, setCode] = useState('');
-      const [result, setResult] = useState(null);
-      return (
-        <div style={{ ...styles.card, maxWidth: '500px', margin: '50px auto' }}>
-          <h2 style={{ color: COLORS.primary }}>Verify Public Receipt</h2>
-          <p>Enter your tracking code to verify your vote was counted.</p>
-          <input style={styles.input} placeholder="UON-XXXXXXXXXX" onChange={e => setCode(e.target.value)} />
-          <button style={{ ...styles.btn, width: '100%' }} onClick={() => {
-            fetch(`${API_BASE}/verify/${code}`)
-              .then(async r => {
-                const data = await r.json();
-                if (!r.ok) { setResult(null); alert(data.detail); } else setResult(data);
-              });
-          }}>Verify Now</button>
-          
-          {result && (
-            <div style={{ marginTop: '20px', padding: '15px', background: '#e8f5e9', borderRadius: '8px' }}>
-              <h3 style={{ margin: '0 0 10px 0', color: COLORS.primary }}>✅ Vote Verified</h3>
-              <p><strong>Timestamp:</strong> {new Date(result.ts + 'Z').toLocaleString()}</p>
-              <div style={{marginTop: '15px'}}>
-                 {result.positions.map((p, idx) => (
-                   <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px', background: '#fff', padding: '10px', borderRadius: '5px', border: '1px solid #ccc' }}>
-                      {p.photo_url ? <img src={p.photo_url} style={{width: '45px', height: '45px', borderRadius: '50%', objectFit: 'cover'}} alt=""/> : <div style={{width: '45px', height: '45px', borderRadius: '50%', background: '#ccc'}}></div>}
-                      <div>
-                          <div style={{fontSize: '11px', color: '#666', textTransform: 'uppercase'}}>{p.position}</div>
-                          <div><strong>{p.candidate_name}</strong> ({p.party})</div>
-                      </div>
-                   </div>
-                 ))}
-              </div>
-            </div>
-          )}
-          <button style={{ ...styles.btnOutline, width: '100%', marginTop: '20px' }} onClick={() => setView('HOME')}>Back to Home</button>
-        </div>
-      );
-  };
-
   return (
     <div style={styles.container}>
       {view !== 'HOME' && view !== 'RECEIPT' && view !== 'VOTING' && view !== 'VERIFY_RECEIPT' && (
@@ -146,7 +149,7 @@ export default function App() {
       )}
       
       {view === 'HOME' && renderHome()}
-      {view === 'VERIFY_RECEIPT' && renderVerifyReceipt()}
+      {view === 'VERIFY_RECEIPT' && <VerifyReceipt setView={setView} />}
       {view === 'ADMIN_LOGIN' && renderAdminLogin()}
       {view === 'VOTER_LOGIN' && renderVoterLogin()}
       {view === 'VOTING' && <VotingBooth countdown={countdown} activeVoter={activeVoter} candidates={candidates} config={config} onComplete={(code) => { setReceipt(code); setView('RECEIPT'); }} onExit={() => setView('HOME')} />}
@@ -280,6 +283,7 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
   useEffect(() => { 
     if (tab === 'VOTERS') fetchVoters(); 
     if (tab === 'RESULTS' || tab === 'OVERVIEW') { fetchResults(); fetchVoters(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
   const handlePhotoUpload = (e) => {
@@ -373,7 +377,7 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
             <div class="name">${v.name}</div>
             <div class="nid">National ID: ${v.national_id}</div>
             <div class="plabel">Voter PIN</div>
-            <div class="pin">${v.pin}</div>
+            <div class="pin">${v.pin && v.pin !== '*****' ? v.pin : 'CHECK SPREADSHEET'}</div>
             <div class="warn">CONFIDENTIAL &mdash; DO NOT SHARE</div>
           </div>
         `).join('');
@@ -488,7 +492,7 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
           
           <hr style={{ margin: '20px 0', border: '1px solid #eee' }} />
           <h3>Bulk Registration (CSV Upload)</h3>
-          <p style={{ fontSize: '0.9em', color: '#666' }}>Upload a .csv file formatted with two columns: <b>Name, National_ID</b> (no header row).</p>
+          <p style={{ fontSize: '0.9em', color: '#666' }}>Upload a .csv file formatted with two columns: <b>Name, National_ID</b>.</p>
           <input type="file" accept=".csv" onChange={handleBulkUpload} style={{ padding: '10px', border: '2px dashed #ccc', width: '100%', boxSizing: 'border-box' }} />
 
           <h3 style={{marginTop: '30px'}}>Registry List</h3>
