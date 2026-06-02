@@ -136,7 +136,6 @@ export default function App() {
       .then(data => { if (data && data.name) setConfig(data); })
       .catch(() => {});
     refreshCandidates();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
   const renderHome = () => (
@@ -247,18 +246,16 @@ function VotingBooth({ countdown, activeVoter, candidates, onComplete, onExit })
     const selectedCandIds = Object.values(selections).filter(v => v !== 'SKIP');
     if(selectedCandIds.length === 0) { alert("You must select at least one candidate."); return; }
     
-    // FETCH PUBLIC KEY AND ENCRYPT
     const pkRes = await fetch(`${API_BASE}/public-key`);
     const pubKey = await pkRes.json();
     
-    // Pass '1' as vote value since they selected the candidate explicitly
     const cryptoPayload = await generateCryptoBallot(1, pubKey);
 
     fetch(`${API_BASE}/vote`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
           national_id: activeVoter, 
-          candidate_id: selectedCandIds[0], // Handled as single selection per submit for encryption scope
+          candidate_id: selectedCandIds[0], 
           ...cryptoPayload 
       })
     }).then(async res => {
@@ -368,7 +365,6 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
   useEffect(() => { 
     if (tab === 'VOTERS') fetchVoters(); 
     if (tab === 'RESULTS' || tab === 'OVERVIEW') { fetchResults(); fetchVoters(); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
   const handlePhotoUpload = (e) => {
