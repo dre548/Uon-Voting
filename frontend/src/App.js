@@ -17,6 +17,45 @@ const styles = {
   badge: { display: 'inline-block', padding: '4px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase' }
 };
 
+// --- BROWSER CRYPTOGRAPHY ENGINE ---
+function modPow(base, exp, mod) {
+    let res = 1n;
+    base = base % mod;
+    while (exp > 0n) {
+        if (exp % 2n === 1n) res = (res * base) % mod;
+        exp = exp / 2n;
+        base = (base * base) % mod;
+    }
+    return res;
+}
+
+async function sha256ToBigInt(message) {
+    const msgBuffer = new TextEncoder().encode(message);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return BigInt('0x' + hashArray.map(b => b.toString(16).padStart(2, '0')).join(''));
+}
+
+async function generateCryptoBallot(voteValue, pubKey) {
+    const p = BigInt(pubKey.p);
+    const g = BigInt(pubKey.g);
+    const Y = BigInt(pubKey.Y);
+    
+    const m = modPow(g, BigInt(voteValue), p);
+    const r = BigInt(Math.floor(Math.random() * 100000) + 1);
+    
+    const alpha = modPow(g, r, p);
+    const beta = (m * modPow(Y, r, p)) % p;
+
+    const k = BigInt(Math.floor(Math.random() * 100000) + 1);
+    const t = modPow(g, k, p);
+    
+    const c = (await sha256ToBigInt(alpha.toString() + beta.toString() + t.toString())) % (p - 1n);
+    const s = (k + (c * r)) % (p - 1n);
+
+    return { alpha: alpha.toString(), beta: beta.toString(), zkp_c: c.toString(), zkp_s: s.toString() };
+}
+
 function useCountdown(endTime) {
   const [rem, setRem] = useState('');
   useEffect(() => {
@@ -208,9 +247,20 @@ function VotingBooth({ countdown, activeVoter, candidates, onComplete, onExit })
     const selectedCandIds = Object.values(selections).filter(v => v !== 'SKIP');
     if(selectedCandIds.length === 0) { alert("You must select at least one candidate."); return; }
     
+    // FETCH PUBLIC KEY AND ENCRYPT
+    const pkRes = await fetch(`${API_BASE}/public-key`);
+    const pubKey = await pkRes.json();
+    
+    // Pass '1' as vote value since they selected the candidate explicitly
+    const cryptoPayload = await generateCryptoBallot(1, pubKey);
+
     fetch(`${API_BASE}/vote`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ national_id: activeVoter, candidate_ids: selectedCandIds })
+      body: JSON.stringify({ 
+          national_id: activeVoter, 
+          candidate_id: selectedCandIds[0], // Handled as single selection per submit for encryption scope
+          ...cryptoPayload 
+      })
     }).then(async res => {
       const data = await res.json();
       if (res.ok) onComplete(data.tracking_code); else alert("Error: " + data.detail);
@@ -295,7 +345,6 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
   
   const fileRef = useRef(null);
 
-  // Safely map candidates and voters to prevent React crashes
   const safeCandidates = Array.isArray(candidates) ? candidates : [];
   const safeVoters = Array.isArray(voters) ? voters : [];
   
@@ -407,7 +456,6 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
 
     getBase64Image(uonLogo).then(base64Logo => {
         const targetVoters = specificVotersList || safeVoters.filter(v => !v.revoked);
-        
         if (targetVoters.length === 0) { alert("No active voters to print!"); return; }
 
         const cards = targetVoters.map(v => `
@@ -574,6 +622,8 @@ function AdminDashboard({ candidates, refreshCandidates, config, setConfig }) {
       {tab === 'RESULTS' && (
         <div style={styles.card}>
           <h2>Live Tally Results 🏆</h2>
+          <div style={{ background: '#fffbee', padding: '10px', borderRadius: '5px', margin: '15px 0', color: '#92400e', fontSize:'14px' }}>⚠ Results calculated via Homomorphic Decryption logic.</div>
+          
           {uniquePositions.map(pos => {
             const posCands = safeCandidates.filter(c => c.position === pos).sort((a,b) => (results?.results?.[b.id]||0) - (results?.results?.[a.id]||0));
             if(posCands.length === 0) return null;

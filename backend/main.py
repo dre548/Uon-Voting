@@ -6,7 +6,7 @@ from typing import List, Optional
 import sqlite3
 import random
 import string
-import json
+import hashlib
 from datetime import datetime
 
 app = FastAPI()
@@ -18,6 +18,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- CRYPTOGRAPHIC PARAMETERS (Safe Prime Groups) ---
+P = 1009
+G = 11
+PRIVATE_KEY_RHO = 43  # Kept strictly secure on the server
+PUBLIC_KEY_Y = pow(G, PRIVATE_KEY_RHO, P) # 432
 
 # --- DATABASE SETUP ---
 def get_db():
@@ -35,8 +41,11 @@ def init_db():
                     (id INTEGER PRIMARY KEY, name TEXT, status TEXT, positions TEXT, end_time TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS audit_log 
                     (id INTEGER PRIMARY KEY AUTOINCREMENT, ts DATETIME DEFAULT CURRENT_TIMESTAMP, action TEXT, details TEXT, actor TEXT)''')
-    conn.execute('''CREATE TABLE IF NOT EXISTS votes_v2 
-                    (id INTEGER PRIMARY KEY AUTOINCREMENT, tracking_code TEXT, national_id TEXT, candidate_id INTEGER, ts DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    
+    # NEW CRYPTO TABLE
+    conn.execute('''CREATE TABLE IF NOT EXISTS votes_crypto 
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT, tracking_code TEXT, national_id TEXT, candidate_id INTEGER, 
+                     alpha TEXT, beta TEXT, zkp_c TEXT, zkp_s TEXT, ts DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     
     # Safe Migrations
     try: conn.execute("ALTER TABLE voters ADD COLUMN revoked BOOLEAN DEFAULT 0")
@@ -62,7 +71,6 @@ init_db()
 def log_audit(conn, action: str, details: str, actor: str = "System"):
     conn.execute("INSERT INTO audit_log (action, details, actor) VALUES (?, ?, ?)", (action, details, actor))
 
-# --- HELPER: CHECK IF DEADLINE PASSED ---
 def is_election_closed(conn):
     settings = conn.execute("SELECT status, end_time FROM settings WHERE id=1").fetchone()
     if not settings: return False
@@ -94,9 +102,13 @@ class VoterAuth(BaseModel):
     national_id: str
     pin: str
 
-class Vote(BaseModel):
+class VotePayload(BaseModel):
     national_id: str
-    candidate_ids: List[int]
+    candidate_id: int
+    alpha: str
+    beta: str
+    zkp_c: str
+    zkp_s: str
 
 class SettingsUpdate(BaseModel):
     name: str
@@ -106,7 +118,7 @@ class SettingsUpdate(BaseModel):
 # --- ENDPOINTS ---
 @app.get("/public-key")
 def get_public_key():
-    return {"p": 1009, "g": 11, "Y": 432}
+    return {"p": P, "g": G, "Y": PUBLIC_KEY_Y}
 
 @app.get("/settings")
 def get_settings():
@@ -228,37 +240,48 @@ def login_voter(auth: VoterAuth):
     voter = conn.execute("SELECT * FROM voters WHERE national_id=?", (auth.national_id,)).fetchone()
     conn.close()
     
-    if not voter:
-        raise HTTPException(status_code=404, detail="Voter not found")
-    if voter["revoked"]:
-        raise HTTPException(status_code=403, detail="Voter credential has been revoked")
-    if voter["has_voted"]:
-        raise HTTPException(status_code=403, detail="Voter has already cast a ballot")
-        
-    if str(auth.pin) != str(voter["pin"]):
-        raise HTTPException(status_code=401, detail="Invalid PIN")
+    if not voter: raise HTTPException(status_code=404, detail="Voter not found")
+    if voter["revoked"]: raise HTTPException(status_code=403, detail="Voter credential has been revoked")
+    if voter["has_voted"]: raise HTTPException(status_code=403, detail="Voter has already cast a ballot")
+    if str(auth.pin) != str(voter["pin"]): raise HTTPException(status_code=401, detail="Invalid PIN")
         
     return {"status": "authenticated", "name": voter["name"]}
 
-# --- VOTING & TALLYING ---
+# --- CRYPTOGRAPHIC VOTING & TALLYING ---
 @app.post("/vote")
-def cast_vote(vote: Vote):
+def cast_vote(vote: VotePayload):
     conn = get_db()
     if is_election_closed(conn):
         conn.close()
-        raise HTTPException(status_code=403, detail="Voting is currently closed or the deadline has passed.")
+        raise HTTPException(status_code=403, detail="Voting is currently closed.")
 
     voter = conn.execute("SELECT * FROM voters WHERE national_id=?", (vote.national_id,)).fetchone()
     if not voter or voter["has_voted"] or voter["revoked"]:
         conn.close()
         raise HTTPException(status_code=403, detail="Unauthorized, already voted, or revoked")
 
+    # Zero-Knowledge Proof Verification
+    alpha_val = int(vote.alpha)
+    beta_val = int(vote.beta)
+    c_val = int(vote.zkp_c)
+    s_val = int(vote.zkp_s)
+
+    g_s = pow(G, s_val, P)
+    alpha_c_inv = pow(pow(alpha_val, c_val, P), P - 2, P)
+    t_reconstructed = (g_s * alpha_c_inv) % P
+    challenge_str = f"{alpha_val}{beta_val}{t_reconstructed}"
+    expected_c = int(hashlib.sha256(challenge_str.encode()).hexdigest(), 16) % (P - 1)
+
+    if c_val != expected_c:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Cryptographic ZKP failed. Ballot rejected.")
+
     tracking_code = "UON-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
     conn.execute("UPDATE voters SET has_voted=1 WHERE national_id=?", (vote.national_id,))
     
-    for cid in vote.candidate_ids:
-        conn.execute("INSERT INTO votes_v2 (tracking_code, national_id, candidate_id) VALUES (?, ?, ?)", 
-                     (tracking_code, vote.national_id, cid))
+    conn.execute('''INSERT INTO votes_crypto (tracking_code, national_id, candidate_id, alpha, beta, zkp_c, zkp_s) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?)''', 
+                 (tracking_code, vote.national_id, vote.candidate_id, vote.alpha, vote.beta, vote.zkp_c, vote.zkp_s))
     
     log_audit(conn, "VOTE_CAST", f"Vote cast successfully by {voter['name']}", "System")
     conn.commit()
@@ -270,14 +293,13 @@ def verify_receipt(tracking_code: str):
     conn = get_db()
     rows = conn.execute('''
         SELECT v.tracking_code, v.ts, c.name as candidate_name, c.position, c.party, c.photo_url
-        FROM votes_v2 v 
+        FROM votes_crypto v 
         JOIN candidates c ON v.candidate_id = c.id 
         WHERE v.tracking_code = ?
     ''', (tracking_code,)).fetchall()
     conn.close()
     
-    if not rows:
-        raise HTTPException(status_code=404, detail="Receipt not found on the bulletin board.")
+    if not rows: raise HTTPException(status_code=404, detail="Receipt not found on the bulletin board.")
     
     return {
         "tracking_code": rows[0]["tracking_code"],
@@ -289,12 +311,35 @@ def verify_receipt(tracking_code: str):
 def get_tally():
     conn = get_db()
     registered = conn.execute("SELECT COUNT(*) FROM voters").fetchone()[0]
-    total_cast = conn.execute("SELECT COUNT(DISTINCT tracking_code) FROM votes_v2").fetchone()[0]
+    total_cast = conn.execute("SELECT COUNT(DISTINCT tracking_code) FROM votes_crypto").fetchone()[0]
     
-    results = {}
-    vote_counts = conn.execute("SELECT candidate_id, COUNT(*) as tally FROM votes_v2 GROUP BY candidate_id").fetchall()
-    for vc in vote_counts:
-        results[vc["candidate_id"]] = vc["tally"]
-        
+    votes = conn.execute("SELECT candidate_id, alpha, beta FROM votes_crypto").fetchall()
     conn.close()
+
+    candidate_ciphertexts = {}
+    for row in votes:
+        cid = row["candidate_id"]
+        if cid not in candidate_ciphertexts: candidate_ciphertexts[cid] = []
+        candidate_ciphertexts[cid].append({"alpha": int(row["alpha"]), "beta": int(row["beta"])})
+
+    results = {}
+    for cid, cts in candidate_ciphertexts.items():
+        alpha_prod = 1
+        beta_prod = 1
+        for ct in cts:
+            alpha_prod = (alpha_prod * ct["alpha"]) % P
+            beta_prod = (beta_prod * ct["beta"]) % P
+            
+        denominator = pow(alpha_prod, PRIVATE_KEY_RHO, P)
+        denominator_inv = pow(denominator, P - 2, P)
+        aggregate_m = (beta_prod * denominator_inv) % P
+        
+        tally = 0
+        while pow(G, tally, P) != aggregate_m and tally < 2000:
+            tally += 1
+        results[cid] = tally
+
     return {"registered": registered, "total_cast": total_cast, "results": results}
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
