@@ -1,3 +1,4 @@
+/* global BigInt */
 import React, { useState, useEffect, useRef } from 'react';
 import uonLogo from './uon-logo.jpeg'; 
 
