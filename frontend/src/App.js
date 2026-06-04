@@ -245,25 +245,38 @@ function VotingBooth({ countdown, activeVoter, candidates, onComplete, onExit })
 
   const submitFinalBallot = async () => {
     const selectedCandIds = Object.values(selections).filter(v => v !== 'SKIP');
-    if(selectedCandIds.length === 0) { alert("You must select at least one candidate."); return; }
+    if (selectedCandIds.length === 0) { 
+      alert("You must select at least one candidate."); 
+      return; 
+    }
     
     const pkRes = await fetch(`${API_BASE}/public-key`);
     const pubKey = await pkRes.json();
     
-    const cryptoPayload = await generateCryptoBallot(1, pubKey);
+    // Generate a secure cryptographic payload for EACH selected candidate
+    const mappedVotes = await Promise.all(
+      selectedCandIds.map(async (candId) => {
+        const cryptoPayload = await generateCryptoBallot(1, pubKey);
+        return {
+          candidate_id: candId,
+          ...cryptoPayload
+        };
+      })
+    );
 
     fetch(`${API_BASE}/vote`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', 
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
           national_id: activeVoter, 
-          candidate_id: selectedCandIds[0], 
-          ...cryptoPayload 
+          votes: mappedVotes 
       })
     }).then(async res => {
       const data = await res.json();
       if (res.ok) onComplete(data.tracking_code); else alert("Error: " + data.detail);
     });
   };
+    
 
   if (phase === 'review') {
     return (
