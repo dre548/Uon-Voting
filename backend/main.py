@@ -102,13 +102,16 @@ class VoterAuth(BaseModel):
     national_id: str
     pin: str
 
-class VotePayload(BaseModel):
-    national_id: str
+class SingleVote(BaseModel):
     candidate_id: int
     alpha: str
     beta: str
     zkp_c: str
     zkp_s: str
+
+class VotePayload(BaseModel):
+    national_id: str
+    votes: List[SingleVote]
 
 class SettingsUpdate(BaseModel):
     name: str
@@ -249,39 +252,43 @@ def login_voter(auth: VoterAuth):
 
 # --- CRYPTOGRAPHIC VOTING & TALLYING ---
 @app.post("/vote")
-def cast_vote(vote: VotePayload):
+def cast_vote(payload: VotePayload):
     conn = get_db()
     if is_election_closed(conn):
         conn.close()
         raise HTTPException(status_code=403, detail="Voting is currently closed.")
 
-    voter = conn.execute("SELECT * FROM voters WHERE national_id=?", (vote.national_id,)).fetchone()
+    voter = conn.execute("SELECT * FROM voters WHERE national_id=?", (payload.national_id,)).fetchone()
     if not voter or voter["has_voted"] or voter["revoked"]:
         conn.close()
         raise HTTPException(status_code=403, detail="Unauthorized, already voted, or revoked")
 
-    # Zero-Knowledge Proof Verification
-    alpha_val = int(vote.alpha)
-    beta_val = int(vote.beta)
-    c_val = int(vote.zkp_c)
-    s_val = int(vote.zkp_s)
-
-    g_s = pow(G, s_val, P)
-    alpha_c_inv = pow(pow(alpha_val, c_val, P), P - 2, P)
-    t_reconstructed = (g_s * alpha_c_inv) % P
-    challenge_str = f"{alpha_val}{beta_val}{t_reconstructed}"
-    expected_c = int(hashlib.sha256(challenge_str.encode()).hexdigest(), 16) % (P - 1)
-
-    if c_val != expected_c:
-        conn.close()
-        raise HTTPException(status_code=400, detail="Cryptographic ZKP failed. Ballot rejected.")
-
+    # Generate ONE tracking code for the entire ballot
     tracking_code = "UON-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-    conn.execute("UPDATE voters SET has_voted=1 WHERE national_id=?", (vote.national_id,))
     
-    conn.execute('''INSERT INTO votes_crypto (tracking_code, national_id, candidate_id, alpha, beta, zkp_c, zkp_s) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?)''', 
-                 (tracking_code, vote.national_id, vote.candidate_id, vote.alpha, vote.beta, vote.zkp_c, vote.zkp_s))
+    # Process and verify ZKP for each candidate voted for
+    for vote in payload.votes:
+        alpha_val = int(vote.alpha)
+        beta_val = int(vote.beta)
+        c_val = int(vote.zkp_c)
+        s_val = int(vote.zkp_s)
+
+        g_s = pow(G, s_val, P)
+        alpha_c_inv = pow(pow(alpha_val, c_val, P), P - 2, P)
+        t_reconstructed = (g_s * alpha_c_inv) % P
+        challenge_str = f"{alpha_val}{beta_val}{t_reconstructed}"
+        expected_c = int(hashlib.sha256(challenge_str.encode()).hexdigest(), 16) % (P - 1)
+
+        if c_val != expected_c:
+            conn.close()
+            raise HTTPException(status_code=400, detail="Cryptographic ZKP failed. Ballot rejected.")
+
+        conn.execute('''INSERT INTO votes_crypto (tracking_code, national_id, candidate_id, alpha, beta, zkp_c, zkp_s) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?)''', 
+                     (tracking_code, payload.national_id, vote.candidate_id, vote.alpha, vote.beta, vote.zkp_c, vote.zkp_s))
+    
+    # Mark the voter as having voted once all votes are securely logged
+    conn.execute("UPDATE voters SET has_voted=1 WHERE national_id=?", (payload.national_id,))
     
     log_audit(conn, "VOTE_CAST", f"Vote cast successfully by {voter['name']}", "System")
     conn.commit()
@@ -343,3 +350,4 @@ def get_tally():
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
+              
